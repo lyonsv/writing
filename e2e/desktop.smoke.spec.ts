@@ -1,42 +1,17 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { _electron as electron, expect, test, type ElectronApplication, type Page } from '@playwright/test';
+import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
-/**
- * Launches the built desktop app. By default it uses the packaged
- * `Margin.app` produced by `pnpm build:desktop`; set MARGIN_E2E_UNPACKED=1 to
- * run `apps/desktop/dist/main.js` with the Electron binary instead. Either way
- * the renderer is the static Expo export served over app://.
- */
-const repo = path.resolve(import.meta.dirname, '..');
-// The electron package lives in apps/desktop, not at the repo root.
-const electronBinary = createRequire(path.join(repo, 'apps/desktop/package.json'))('electron') as unknown as string;
-const packagedCandidates = ['mac-arm64', 'mac', 'mac-universal'].map((d) =>
-  path.join(repo, 'apps/desktop/release', d, 'Margin.app/Contents/MacOS/Margin'),
-);
-
-function launchOptions(env: Record<string, string>): Parameters<typeof electron.launch>[0] {
-  const packaged = packagedCandidates.find((p) => existsSync(p));
-  const baseEnv = { ...process.env, ...env } as Record<string, string>;
-  delete baseEnv.MARGIN_DEV_SERVER_URL;
-  if (packaged && !process.env.MARGIN_E2E_UNPACKED) {
-    return { executablePath: packaged, args: [], env: baseEnv };
-  }
-  return { executablePath: electronBinary, args: [path.join(repo, 'apps/desktop/dist/main.js')], env: baseEnv };
-}
+import { launch, newLibrary, quitAndWait } from './launch';
 
 let app: ElectronApplication;
 let page: Page;
 let libraryDir: string;
-let userDataDir: string;
 
 test.beforeAll(async () => {
-  libraryDir = mkdtempSync(path.join(tmpdir(), 'margin-lib-'));
-  userDataDir = mkdtempSync(path.join(tmpdir(), 'margin-userdata-'));
-  app = await electron.launch(launchOptions({ MARGIN_LIBRARY_DIR: libraryDir, MARGIN_USER_DATA_DIR: userDataDir, MARGIN_SHOW_INACTIVE: '1' }));
+  libraryDir = newLibrary();
+  app = await launch(libraryDir);
   page = await app.firstWindow();
   page.on('pageerror', (e) => console.log(`[renderer] pageerror: ${e.message}`));
   page.on('console', (m) => {
@@ -47,7 +22,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await app?.close();
   rmSync(libraryDir, { recursive: true, force: true });
-  rmSync(userDataDir, { recursive: true, force: true });
 });
 
 test('loads the static export over app:// with a hidden-inset window', async () => {
@@ -62,8 +36,7 @@ test('loads the static export over app:// with a hidden-inset window', async () 
       label: item?.label,
     };
   });
-  const expectPackaged = !process.env.MARGIN_E2E_UNPACKED && packagedCandidates.some((p) => existsSync(p));
-  expect(info).toEqual({ packaged: expectPackaged, fullscreenable: true, accelerator: 'Control+Command+F', label: 'Enter Full Screen' });
+  expect(info).toEqual({ packaged: false, fullscreenable: true, accelerator: 'Control+Command+F', label: 'Enter Full Screen' });
 });
 
 test('types into the editor and saves to a .md file', async () => {
@@ -167,4 +140,33 @@ test('View > Enter Full Screen toggles native fullscreen', async () => {
   await expect.poll(isFull, { timeout: 10_000 }).toBe(true);
   await clickItem();
   await expect.poll(isFull, { timeout: 10_000 }).toBe(false);
+});
+
+test('quote markers and link brackets are dimmed like other markers', async () => {
+  const lib = newLibrary();
+  writeFileSync(path.join(lib, 'Untitled.md'), '# Title\n\n> A quote\n\nSee [a link](https://example.com).\n');
+  const other = await launch(lib);
+  const p = await other.firstWindow();
+  await expect(p.locator('.cm-content')).toContainText('A quote');
+  const colors = await p.evaluate(() => {
+    const spans = Array.from(document.querySelectorAll('.cm-line span'));
+    const colorOf = (text: string) => {
+      const el = spans.find((s) => s.textContent === text);
+      return el ? getComputedStyle(el).color : null;
+    };
+    return {
+      hash: colorOf('#'),
+      quote: colorOf('>'),
+      open: colorOf('['),
+      close: colorOf(']'),
+      text: getComputedStyle(document.querySelector('.cm-line')!).color,
+    };
+  });
+  expect(colors.hash).not.toBeNull();
+  expect(colors.hash).not.toBe(colors.text);
+  expect(colors.quote).toBe(colors.hash);
+  expect(colors.open).toBe(colors.hash);
+  expect(colors.close).toBe(colors.hash);
+  await quitAndWait(other);
+  rmSync(lib, { recursive: true, force: true });
 });
