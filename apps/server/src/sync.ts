@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { PreconditionFailedError, type KeyValueStore } from './store.js';
+import { foldPathCase } from './syncPaths.js';
 
 /**
  * Sync storage (ADR 0013).
@@ -150,10 +151,10 @@ export class SyncRepository {
    * (`a.md` vs `a.md/b.md`). `except` is the path being moved away.
    */
   private checkFree(m: Manifest, path: string, except?: string): void {
-    const lower = path.toLowerCase();
+    const lower = foldPathCase(path);
     for (const [p, e] of Object.entries(m.entries)) {
       if (e.deleted || p === path || p === except) continue;
-      const q = p.toLowerCase();
+      const q = foldPathCase(p);
       if (q === lower || q.startsWith(`${lower}/`) || lower.startsWith(`${q}/`)) {
         throw new SyncConflictError('path', null, p);
       }

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { isSyncablePath } from '@margin/core';
+import { foldPathCase as coreFold, isSyncablePath } from '@margin/core';
 import { describe, expect, it } from 'vitest';
 
 import { MAX_DOCUMENT_BYTES, SyncRepository } from '../src/sync';
-import { isSyncPath } from '../src/syncPaths';
+import { foldPathCase, isSyncPath } from '../src/syncPaths';
 import { BlobStore } from '../src/blobStore';
 import { MemoryStore } from '../src/store';
 import { fakeBlobClient } from './fakeBlobClient';
@@ -115,6 +115,21 @@ describe('sync API', () => {
     expect((await c.put('folder.md', 'x', created)).status).toBe(409);
   });
 
+  it('folds case like a case-insensitive disk, not just toLowerCase (ß/SS, ſ/S, digraphs, ligatures, accents)', async () => {
+    const c = await client();
+    for (const [first, second] of [
+      ['ß.md', 'SS.md'],
+      ['straße.md', 'STRASSE.md'],
+      ['ſ.md', 'S.md'],
+      ['\u01C5.md', '\u01C4.md'], // titlecase vs uppercase digraph (the Kelvin sign isn't NFC, so it's rejected outright)
+      ['\uFB00.md', 'FF.md'],
+      ['Été.md', 'été.md'],
+    ]) {
+      expect((await c.put(first!, 'x', created)).status, first).toBe(200);
+      expect((await c.put(second!, 'y', created)).status, `${first} vs ${second}`).toBe(409);
+    }
+  });
+
   it('round-trips arbitrary bytes exactly (BOM, CRLF, not UTF-8)', async () => {
     const c = await client();
     const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x0d, 0x0a, 0xff, 0xfe, 0x00, 0x80]);
@@ -158,6 +173,13 @@ describe('sync API', () => {
     const keys = await c.h.store.list('');
     expect(keys.filter((k) => k.startsWith('auth/devices/') && k.includes('x.md'))).toEqual([]);
     expect(keys.some((k) => k.startsWith('sync/objects/'))).toBe(true);
+  });
+});
+
+describe('server and core agree on case folding', () => {
+  it('on a corpus of tricky characters', () => {
+    const chars = ['a', 'A', 'ß', 'SS', 'ſ', 's', '\u212A', 'k', 'K', '\uFB00', 'ff', 'ς', 'σ', 'Σ', 'İ', 'i', 'I', 'ı', 'é', 'e\u0301', 'É', 'Ǆ', 'ǆ', 'ǅ', '日'];
+    for (const a of chars) for (const b of chars) expect(foldPathCase(`${a}${b}.md`)).toBe(coreFold(`${a}${b}.md`));
   });
 });
 

@@ -11,6 +11,11 @@ export const MAX_PATH_BYTES = 1024;
 
 const utf8 = (s: string) => Buffer.byteLength(s, 'utf8');
 
+/** Same as `foldPathCase` in @margin/core: paths equal under this collide on case-insensitive disks. */
+export function foldPathCase(path: string): string {
+  return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC');
+}
+
 export function isSyncPath(path: unknown): path is string {
   if (typeof path !== 'string' || path === '' || path.normalize('NFC') !== path) return false;
   // eslint-disable-next-line no-control-regex

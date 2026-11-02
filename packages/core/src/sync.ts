@@ -84,6 +84,17 @@ export function isSyncablePath(path: string): boolean {
   return path.split('/').every((s) => utf8Length(s) <= MAX_FILENAME_BYTES);
 }
 
+/**
+ * The key under which two paths are "the same file" on a case-insensitive disk
+ * (APFS default, iOS). Closer to APFS than `toLowerCase()`: upper-then-lower
+ * case maps `ß`→`ss`, `ſ`→`s`, the Kelvin sign→`k` and ligatures like `ﬀ`→`ff`,
+ * and NFC on both ends makes composed and decomposed accents equal. The server
+ * uses the same function (apps/server/src/syncPaths.ts; a test checks they agree).
+ */
+export function foldPathCase(path: string): string {
+  return path.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC');
+}
+
 export interface PlanOptions {
   /** Detect renames (delete + create of the same content) and turn them into moves. Default true. */
   detectMoves?: boolean;

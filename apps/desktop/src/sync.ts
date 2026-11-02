@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   SyncPreconditionError,
   SyncRejectedError,
+  foldPathCase,
   isSyncablePath,
   runSync,
   type BaseEntry,
@@ -130,10 +131,14 @@ class LibraryLocal implements SyncLocal {
     const out: LocalFile[] = [];
     const hashes: StateFile['hashes'] = {};
     this.disk.clear();
+    const folded = new Set<string>();
     for (const e of entries) {
       if (e.kind !== 'document') continue;
       const nfc = e.path.normalize('NFC');
-      if (!isSyncablePath(nfc) || this.disk.has(nfc)) continue;
+      // On a case-sensitive volume two local names can fold together; the server
+      // would refuse the second (409), so only the first is synced.
+      if (!isSyncablePath(nfc) || this.disk.has(nfc) || folded.has(foldPathCase(nfc))) continue;
+      folded.add(foldPathCase(nfc));
       const st = await this.library.statForSync(e.path);
       if (!st) continue;
       const cached = this.state.hashes[nfc];
