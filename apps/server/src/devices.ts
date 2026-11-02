@@ -158,6 +158,14 @@ export class DeviceRepository {
       if (!r) continue;
       const deadSince = r.revokedAt ?? r.expiresAt;
       if (deadSince <= t) {
+        // WARNING: never delete a key that is also written with compare-and-swap while
+        // a writer might still hold its ETag. On GitHub a PUT with a `sha` for a missing
+        // file is NOT refused: it creates the file (verified, ADR 0021), so a delete
+        // racing a touch or revoke could resurrect the record. GitHubStore checks the
+        // sha first, but a delete landing between that check and the PUT still wins.
+        // This is safe only because the record has been dead (revoked or expired) for
+        // longer than TOMBSTONE_RETENTION_MS (7 days): no live token can be touching it.
+        // Revocation therefore writes a tombstone; it never deletes.
         if (t - deadSince > TOMBSTONE_RETENTION_MS) await this.store.delete(k);
         continue;
       }
