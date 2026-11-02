@@ -1,9 +1,18 @@
-import { DESKTOP_BRIDGE_KEY, IPC_CHANNELS, type DesktopBridge } from '@margin/core';
+import { DESKTOP_BRIDGE_KEY, IPC_CHANNELS, type DesktopBridge, type ExternalChange } from '@margin/core';
 import { contextBridge, ipcRenderer } from 'electron';
 
 // Sandboxed preload: only `electron` may be required at runtime; @margin/core is
-// inlined by esbuild (and only constants are used from it here).
+// inlined by esbuild (only constants are used from it here).
 const invoke = <T>(channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args) as Promise<T>;
+
+// Flush handshake: main asks before closing/quitting; we run every registered
+// handler (the app pushes unsaved text and awaits the save), then confirm.
+const flushHandlers = new Set<() => Promise<void>>();
+ipcRenderer.on(IPC_CHANNELS.flushRequest, (_event, id: number) => {
+  void Promise.allSettled([...flushHandlers].map((h) => h())).then(() => {
+    ipcRenderer.send(IPC_CHANNELS.flushDone, id);
+  });
+});
 
 const bridge: DesktopBridge = {
   platform: process.platform,
@@ -14,6 +23,24 @@ const bridge: DesktopBridge = {
     rename: (from, to) => invoke(IPC_CHANNELS.rename, from, to),
     delete: (path) => invoke(IPC_CHANNELS.delete, path),
     createFolder: (path) => invoke(IPC_CHANNELS.createFolder, path),
+  },
+  documents: {
+    open: (path) => invoke(IPC_CHANNELS.open, path),
+    save: (path, content) => invoke(IPC_CHANNELS.save, path, content),
+    acknowledgeExternal: (path, token) => invoke(IPC_CHANNELS.acknowledgeExternal, path, token),
+    onExternalChange: (listener) => {
+      const wrapped = (_event: unknown, change: ExternalChange) => listener(change);
+      ipcRenderer.on(IPC_CHANNELS.externalChange, wrapped);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.externalChange, wrapped);
+      };
+    },
+  },
+  onFlushRequest: (handler) => {
+    flushHandlers.add(handler);
+    return () => {
+      flushHandlers.delete(handler);
+    };
   },
   libraryRoot: () => invoke(IPC_CHANNELS.libraryRoot),
   toggleFullScreen: () => invoke(IPC_CHANNELS.toggleFullScreen),

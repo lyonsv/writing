@@ -1,13 +1,15 @@
 import path from 'node:path';
 
-import { IPC_CHANNELS } from '@margin/core';
+import { IPC_CHANNELS, type ExternalChange } from '@margin/core';
 import {
   BrowserWindow,
   Menu,
   app,
   ipcMain,
   nativeTheme,
+  session,
   shell,
+  type IpcMainEvent,
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from 'electron';
@@ -24,6 +26,8 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_SHOW_INACTIVE   show the window without taking OS focus (automated tests)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
+/** How long to wait for a renderer to flush before closing anyway (it may be hung). */
+const FLUSH_TIMEOUT_MS = 20_000;
 
 if (process.env.MARGIN_USER_DATA_DIR) {
   app.setPath('userData', path.resolve(process.env.MARGIN_USER_DATA_DIR));
@@ -32,7 +36,13 @@ if (process.env.MARGIN_USER_DATA_DIR) {
 registerAppScheme();
 
 const libraryDir = path.resolve(process.env.MARGIN_LIBRARY_DIR ?? path.join(app.getPath('documents'), 'Margin'));
-const library = new FileSystemLibrary(libraryDir);
+const library = new FileSystemLibrary(libraryDir, { onExternalChange: broadcastExternalChange });
+
+function broadcastExternalChange(change: ExternalChange): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.externalChange, change);
+  }
+}
 
 function webRoot(): string {
   if (process.env.MARGIN_WEB_DIR) return path.resolve(process.env.MARGIN_WEB_DIR);
@@ -57,7 +67,7 @@ function isTrustedOrigin(url: string): boolean {
 }
 
 /** IPC handlers only answer our own top-level page. */
-function assertTrustedSender(event: IpcMainInvokeEvent): void {
+function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
   const frame = event.senderFrame;
   if (!frame || frame.parent !== null || !isTrustedOrigin(frame.url)) {
     throw new Error('Untrusted IPC sender');
@@ -74,6 +84,55 @@ function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Pro
   });
 }
 
+// ------------------------------------------------------------------ flush handshake
+
+let flushSeq = 0;
+const flushWaiters = new Map<number, () => void>();
+
+/**
+ * Asks the window's renderer to push any unsaved editor text through `save`
+ * and waits for it to confirm, then waits for the write queue to drain.
+ */
+function flushWindow(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed() || win.webContents.isCrashed()) return library.idle();
+  const id = ++flushSeq;
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      flushWaiters.delete(id);
+      console.warn(`Margin: renderer did not confirm flush within ${FLUSH_TIMEOUT_MS}ms`);
+      resolve();
+    }, FLUSH_TIMEOUT_MS);
+    flushWaiters.set(id, () => {
+      clearTimeout(timer);
+      flushWaiters.delete(id);
+      resolve();
+    });
+    win.webContents.send(IPC_CHANNELS.flushRequest, id);
+  }).then(() => library.idle());
+}
+
+let quitReady = false;
+let quitting = false;
+
+app.on('before-quit', (event) => {
+  if (quitReady) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
+  void Promise.all(BrowserWindow.getAllWindows().map(flushWindow))
+    .then(() => library.idle())
+    .catch((error: unknown) => console.error('Margin: flush before quit failed', error))
+    .finally(() => {
+      quitReady = true;
+      library.dispose();
+      app.quit();
+    });
+});
+
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+  process.on(signal, () => app.quit());
+}
+
 function registerIpc(): void {
   handle(IPC_CHANNELS.list, (folder?: string) => library.list(folder));
   handle(IPC_CHANNELS.read, (p: string) => library.read(p));
@@ -81,9 +140,27 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.rename, (from: string, to: string) => library.rename(from, to));
   handle(IPC_CHANNELS.delete, (p: string) => library.delete(p, (abs) => shell.trashItem(abs)));
   handle(IPC_CHANNELS.createFolder, (p: string) => library.createFolder(p));
+  handle(IPC_CHANNELS.open, async (p: string) => {
+    const doc = await library.open(p);
+    library.unwatchAllExcept(doc.path); // single-document UI for now
+    return doc;
+  });
+  handle(IPC_CHANNELS.save, (p: string, content: string) => library.save(p, content));
+  handle(IPC_CHANNELS.acknowledgeExternal, (p: string, token: string) => library.acknowledgeExternal(p, token));
   handle(IPC_CHANNELS.libraryRoot, async () => library.root);
   handle(IPC_CHANNELS.toggleFullScreen, async () => toggleFullScreen());
+
+  ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown) => {
+    try {
+      assertTrustedSender(event);
+    } catch {
+      return;
+    }
+    if (typeof id === 'number') flushWaiters.get(id)?.();
+  });
 }
+
+// ------------------------------------------------------------------ window
 
 function toggleFullScreen(win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]): void {
   if (win) win.setFullScreen(!win.isFullScreen());
@@ -113,13 +190,18 @@ function buildMenu(): void {
     },
     { role: 'windowMenu' },
   ];
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function updateFullScreenLabel(fullScreen: boolean): void {
   const item = Menu.getApplicationMenu()?.getMenuItemById('toggle-fullscreen');
   if (item) item.label = fullScreen ? 'Exit Full Screen' : 'Enter Full Screen';
+}
+
+function blockUntrustedNavigation(event: { preventDefault(): void }, url: string): void {
+  if (isTrustedOrigin(url)) return;
+  event.preventDefault();
+  if (/^https?:\/\//.test(url)) void shell.openExternal(url);
 }
 
 function createWindow(): BrowserWindow {
@@ -140,6 +222,7 @@ function createWindow(): BrowserWindow {
       sandbox: true,
       nodeIntegration: false,
       webSecurity: true,
+      webviewTag: false,
       spellcheck: true,
     },
   });
@@ -148,17 +231,30 @@ function createWindow(): BrowserWindow {
   win.on('enter-full-screen', () => updateFullScreenLabel(true));
   win.on('leave-full-screen', () => updateFullScreenLabel(false));
 
+  // Closing the window flushes unsaved text first (quit has its own flush).
+  let closeReady = false;
+  let closing = false;
+  win.on('close', (event) => {
+    if (closeReady || quitReady) return;
+    event.preventDefault();
+    if (closing || quitting) return;
+    closing = true;
+    void flushWindow(win).finally(() => {
+      closeReady = true;
+      if (!win.isDestroyed()) win.close();
+    });
+  });
+
   // No new windows; http(s) links open in the default browser.
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  const contents = win.webContents;
+  contents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!isTrustedOrigin(url)) {
-      event.preventDefault();
-      if (/^https?:\/\//.test(url)) void shell.openExternal(url);
-    }
-  });
+  contents.on('will-navigate', (event, url) => blockUntrustedNavigation(event, url));
+  contents.on('will-redirect', (event, url) => blockUntrustedNavigation(event, url));
+  contents.on('will-frame-navigate', (event) => blockUntrustedNavigation(event, event.url));
+  contents.on('will-attach-webview', (event) => event.preventDefault());
 
   void win.loadURL(startUrl());
   return win;
@@ -166,6 +262,8 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   await library.init();
+  // No camera, mic, notifications, etc.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   if (!DEV_SERVER_URL) handleAppScheme(webRoot());
   registerIpc();
   buildMenu();
