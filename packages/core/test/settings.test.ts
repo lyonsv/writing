@@ -6,10 +6,17 @@ describe('settings', () => {
     expect(parseSettings(null)).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings('nope')).toEqual(DEFAULT_SETTINGS);
     expect(parseSettings({ focusMode: true, focusScope: 'paragraph', typewriter: 'yes', evil: 1 })).toEqual({
+      ...DEFAULT_SETTINGS,
       focusMode: true,
       focusScope: 'paragraph',
-      typewriter: false,
     });
+    expect(parseSettingsPatch({ sidebar: true, librarySort: 'modified', lastDocument: 'a/b.md', libraryDir: '/x' })).toEqual({
+      sidebar: true,
+      librarySort: 'modified',
+      lastDocument: 'a/b.md',
+      libraryDir: '/x',
+    });
+    expect(parseSettingsPatch({ librarySort: 'size', lastDocument: 5 })).toEqual({});
     expect(parseSettingsPatch({ focusScope: 'line' })).toEqual({});
   });
 

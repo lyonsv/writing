@@ -8,12 +8,24 @@ export interface Settings {
   focusScope: FocusScopeSetting;
   /** Keep the caret's line vertically centred. Independent of focus mode. */
   typewriter: boolean;
+  /** Library sidebar visible (never shown in focus mode). */
+  sidebar: boolean;
+  librarySort: 'name' | 'modified';
+  /** Library-relative path of the last opened document. */
+  lastDocument?: string;
+  /**
+   * Absolute path of the library folder (desktop). Only the main process sets
+   * this (via the folder picker); renderer patches can't.
+   */
+  libraryDir?: string;
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
   focusMode: false,
   focusScope: 'sentence',
   typewriter: false,
+  sidebar: false,
+  librarySort: 'name',
 });
 
 const SCOPES: readonly FocusScopeSetting[] = ['sentence', 'paragraph', 'off'];
@@ -25,6 +37,10 @@ export function parseSettingsPatch(input: unknown): Partial<Settings> {
   const out: Partial<Settings> = {};
   if (typeof raw.focusMode === 'boolean') out.focusMode = raw.focusMode;
   if (typeof raw.typewriter === 'boolean') out.typewriter = raw.typewriter;
+  if (typeof raw.sidebar === 'boolean') out.sidebar = raw.sidebar;
+  if (raw.librarySort === 'name' || raw.librarySort === 'modified') out.librarySort = raw.librarySort;
+  if (typeof raw.lastDocument === 'string' && raw.lastDocument.length < 4096) out.lastDocument = raw.lastDocument;
+  if (typeof raw.libraryDir === 'string' && raw.libraryDir.length < 4096) out.libraryDir = raw.libraryDir;
   if (typeof raw.focusScope === 'string' && (SCOPES as readonly string[]).includes(raw.focusScope)) {
     out.focusScope = raw.focusScope as FocusScopeSetting;
   }
