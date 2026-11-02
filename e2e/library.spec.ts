@@ -392,3 +392,59 @@ test('a library listing cut off at the limit says so in the sidebar', async () =
   await expect(page2.getByTestId('library-truncated')).toHaveCount(0);
   await quitAndWait(app2);
 });
+
+test('sidebar keyboard navigation: arrows move, Right/Left expand and collapse, Enter opens, F2 renames', async () => {
+  // Written in this order so b.md is the newest and opens first (notes stays collapsed).
+  const { app, page } = await setup({ 'notes/c.md': 'C', 'a.md': 'A', 'b.md': 'B' });
+  await showSidebar(app, page);
+  await expect.poll(() => currentDocument(page)).toBe('b.md');
+  const focused = (p: string) => expect(row(page, p).locator('[role="button"]')).toBeFocused();
+  const expandedRows = () => page.locator('[data-testid^="library-row:notes/"]');
+
+  // Clicking a folder toggles it (expands) and puts the keyboard cursor on it.
+  await row(page, 'notes').click();
+  await focused('notes');
+  await expect(expandedRows()).toHaveCount(1);
+  await page.keyboard.press('ArrowLeft'); // collapse
+  await expect(expandedRows()).toHaveCount(0);
+  await page.keyboard.press('ArrowRight'); // expand
+  await expect(expandedRows()).toHaveCount(1);
+  await page.keyboard.press('ArrowRight'); // into the folder
+  await focused('notes/c.md');
+  await page.keyboard.press('ArrowLeft'); // back out to the parent
+  await focused('notes');
+  await page.keyboard.press('ArrowDown');
+  await focused('notes/c.md');
+  await page.keyboard.press('ArrowDown');
+  await focused('a.md');
+  await page.keyboard.press('ArrowDown');
+  await focused('b.md');
+  await page.keyboard.press('ArrowDown'); // stays at the end
+  await focused('b.md');
+  await page.keyboard.press('ArrowUp');
+  await focused('a.md');
+
+  // F2 renames the row under the cursor; Escape cancels.
+  await page.keyboard.press('F2');
+  await expect(page.getByTestId('library-rename-input')).toHaveValue('a');
+  await page.getByTestId('library-rename-input').press('Escape');
+  await expect(page.getByTestId('library-rename-input')).toHaveCount(0);
+
+  // Enter opens the document under the cursor (once).
+  await row(page, 'notes').click(); // collapse; cursor back in the sidebar
+  await page.keyboard.press('ArrowDown');
+  await focused('a.md');
+  await page.keyboard.press('ArrowDown');
+  await focused('b.md');
+  await page.keyboard.press('ArrowUp');
+  await focused('a.md');
+  await page.keyboard.press('Enter');
+  await expect.poll(() => currentDocument(page)).toBe('a.md');
+
+  // Enter on a folder toggles it, once.
+  await row(page, 'notes').click(); // expand
+  await expect(expandedRows()).toHaveCount(1);
+  await page.keyboard.press('Enter'); // collapse
+  await expect(expandedRows()).toHaveCount(0);
+  await quitAndWait(app);
+});

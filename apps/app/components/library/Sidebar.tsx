@@ -1,6 +1,7 @@
 import {
   ancestorsOf,
   canMoveInto,
+  dirname,
   displayName,
   flattenTree,
   movedPath,
@@ -10,7 +11,7 @@ import {
   type LibrarySort,
   type TreeNode,
 } from '@margin/core';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DropArea, RowShell } from './dnd';
@@ -60,6 +61,10 @@ export function Sidebar(props: SidebarProps) {
   const [renaming, setRenaming] = useState<{ path: string; kind: 'document' | 'folder'; value: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ node: TreeNode; items: ContextMenuItem[] } | null>(null);
+  /** Keyboard cursor: the row that has (or last had) focus. DOM focus follows it. */
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [rowFocused, setRowFocused] = useState(false);
+  const rowRefs = useRef(new Map<string, unknown>());
 
   // Keep the open document visible.
   useEffect(() => {
@@ -77,6 +82,57 @@ export function Sidebar(props: SidebarProps) {
   }, [props.renameRequest]);
 
   const rows = useMemo(() => flattenTree(tree, expanded), [tree, expanded]);
+
+  /** Moves the cursor and DOM focus to a row (web: real focus, so Enter/Space reach its Pressable). */
+  const focusRow = (path: string) => {
+    setCursor(path);
+    const el = rowRefs.current.get(path) as { focus?: () => void; scrollIntoView?: (o: object) => void } | undefined;
+    el?.focus?.();
+    el?.scrollIntoView?.({ block: 'nearest' });
+  };
+
+  /**
+   * Arrow keys move, Right/Left expand/collapse (or step into a folder / out to its
+   * parent), F2 renames. Enter and Space are handled by the focused row's Pressable
+   * (open a document, toggle a folder). Keys typed into the rename field or with
+   * modifiers (menu shortcuts) are left alone.
+   */
+  const onKeyDown = (e: { key: string; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; preventDefault: () => void }) => {
+    if (renaming || menu || e.metaKey || e.ctrlKey || e.altKey) return;
+    const current = cursor ?? activePath;
+    const index = rows.findIndex((r) => r.node.path === current);
+    const row = rows[index];
+    let target: string | undefined;
+    switch (e.key) {
+      case 'ArrowDown':
+        target = (index < 0 ? rows[0] : rows[index + 1])?.node.path;
+        break;
+      case 'ArrowUp':
+        target = (index < 0 ? rows[rows.length - 1] : rows[index - 1])?.node.path;
+        break;
+      case 'ArrowRight':
+        if (row?.node.kind !== 'folder') return;
+        if (!row.expanded) toggle(row.node.path);
+        else if ((rows[index + 1]?.depth ?? -1) > row.depth) target = rows[index + 1]!.node.path;
+        break;
+      case 'ArrowLeft':
+        if (!row) return;
+        if (row.node.kind === 'folder' && row.expanded) toggle(row.node.path);
+        else if (dirname(row.node.path) !== '') target = dirname(row.node.path);
+        break;
+      case 'F2':
+        if (!row) return;
+        e.preventDefault();
+        return void perform(row.node, 'rename');
+      default:
+        return;
+    }
+    e.preventDefault();
+    if (target !== undefined) focusRow(target);
+  };
+  // `onKeyDown` on a View is a react-native-web prop (not in RN's types). On iOS hardware
+  // keyboards this is a no-op for now; touch navigation is unaffected.
+  const keyboardProps = { onKeyDown } as Record<string, unknown>;
 
   const run = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -160,7 +216,7 @@ export function Sidebar(props: SidebarProps) {
   };
 
   return (
-    <View testID="library-sidebar" style={[styles.root, { backgroundColor: colors.background, paddingTop: props.topInset ?? 0 }]}>
+    <View testID="library-sidebar" {...keyboardProps} style={[styles.root, { backgroundColor: colors.background, paddingTop: props.topInset ?? 0 }]}>
       <View style={styles.header}>
         <Pressable testID="library-new-document" onPress={() => void run(() => props.onCreateDocument(''))} hitSlop={6}>
           <Text style={[styles.headerButton, { color: colors.muted }]}>New</Text>
@@ -204,8 +260,23 @@ export function Sidebar(props: SidebarProps) {
                 onDropPath={(dragged) => move(dragged, node.path)}
               >
                 <Pressable
+                  ref={(el) => {
+                    if (el) rowRefs.current.set(node.path, el);
+                    else rowRefs.current.delete(node.path);
+                  }}
                   onPress={() => (node.kind === 'folder' ? toggle(node.path) : props.onOpen(node.path))}
-                  style={[styles.row, { paddingLeft: 12 + depth * 14 }, active && { backgroundColor: colors.active }]}
+                  onFocus={() => {
+                    setCursor(node.path);
+                    setRowFocused(true);
+                  }}
+                  onBlur={() => setRowFocused(false)}
+                  style={[
+                    styles.row,
+                    { paddingLeft: 12 + depth * 14 },
+                    active && { backgroundColor: colors.active },
+                    // Keyboard cursor: a hairline frame (always reserved, so nothing shifts).
+                    { borderColor: rowFocused && cursor === node.path ? colors.muted : 'transparent' },
+                  ]}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active, expanded: node.kind === 'folder' ? isOpen : undefined }}
                 >
@@ -292,7 +363,16 @@ const styles = StyleSheet.create({
   root: { width: 260, height: '100%' },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, gap: 14 },
   headerButton: { fontSize: 12, letterSpacing: 0.2 },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, paddingRight: 12, borderRadius: 4, marginHorizontal: 6 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingRight: 12,
+    borderRadius: 4,
+    marginHorizontal: 6,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
   disclosure: { width: 14, fontSize: 10 },
   label: { flex: 1, fontSize: 13 },
   input: { flex: 1, fontSize: 13, paddingVertical: 1, paddingHorizontal: 4, borderWidth: StyleSheet.hairlineWidth, borderRadius: 3 },

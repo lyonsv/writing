@@ -36,3 +36,10 @@ The library needs UI, but Margin is a distraction-free writer: the default view 
 ## Consequences
 - On iOS, moving an item means renaming it for now; a "Move to…" picker is a candidate for M6.
 - The sidebar's top area isn't a window-drag region (the editor's is). That's minor, and could become a web-only drag strip later.
+
+## Amendments (2026-11-02, after M3 validation)
+- **Keyboard navigation.** With focus in the sidebar (click a row, or Tab to it): ↑/↓ move, → expands a folder or steps into it, ← collapses a folder or steps out to its parent, Enter/Space open a document or toggle a folder, F2 renames. DOM focus follows the cursor, so Enter/Space are handled by the focused row's `Pressable`; the sidebar handles only arrows and F2, and ignores keys from the rename field and keys with modifiers (menu shortcuts). `onKeyDown` on a `View` is a react-native-web prop, so this is web/desktop-only for now; iOS hardware keyboards are an M6 item.
+- **The rename field keeps focus after Enter** (`blurOnSubmit={false}`; `submitBehavior="submit"` on RN). react-native-web otherwise blurs it one macrotask after Enter, and with commit-on-blur that committed text typed after an invalid name.
+- **Name limits are in UTF-8 bytes** (`MAX_NAME_BYTES` = 200 in `tree.ts`), not characters, leaving room for `.md`, conflict and counter suffixes under the 255-byte filesystem limit.
+- **Truncated listings** (over 50,000 entries or 64 folders deep) show "Showing the first N items" at the bottom of the sidebar.
+- **Case-only renames** (`a.md` → `A.md`) work on case-insensitive volumes (via a hidden temp name; ADR 0006's never-replace rule still holds).
