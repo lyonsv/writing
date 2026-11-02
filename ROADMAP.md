@@ -3,7 +3,7 @@
 Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update this file in the same commit as the work.
 
 ## M0 — Foundations
-- [~] Research platform best practices → `docs/research/best-practices.md`
+- [x] Research platform best practices → `docs/research/best-practices.md`
 - [ ] Monorepo scaffold (pnpm workspaces, TS, lint, tests)
 - [ ] Architecture decision records in `docs/decisions/`
 
