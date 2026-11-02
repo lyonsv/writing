@@ -1,5 +1,4 @@
 import {
-  FLUSH_EVENT,
   SaveScheduler,
   basename,
   childNames,
@@ -19,6 +18,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ExternalContent } from '../components/editor/MarkdownEditor';
+import { flushEditor } from './editorFlush';
 import { getDocumentBackend, getLibraryBackend } from './storage/documentStore';
 
 /** One open document and its save pipeline (docs/decisions/0006-save-pipeline.md). */
@@ -134,7 +134,7 @@ export function useWorkspace(
   const flushCurrent = useCallback(async (): Promise<boolean> => {
     const s = sessionRef.current;
     if (!s) return true;
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event(FLUSH_EVENT));
+    await flushEditor();
     await s.scheduler.flush();
     return !s.scheduler.dirty;
   }, []);
@@ -328,6 +328,8 @@ export function useWorkspace(
     rename,
     trash,
     refresh,
+    /** Hands over the editor's pending text and waits for it to save; false if it couldn't be saved. */
+    flush: flushCurrent,
   };
 }
 

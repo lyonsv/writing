@@ -1,13 +1,13 @@
 import type { SyncStatus } from '@margin/core';
 import { useEffect, useState } from 'react';
 
-import { getDesktopBridge } from './storage/documentStore';
+import { getSyncSource } from './storage/documentStore';
 
-/** Desktop sync status from main (ADR 0013); null where there's no sync (browser, iOS until M6). */
+/** Sync status (desktop: from main; iOS: the native sync service); null where there's no sync (browser). */
 export function useSyncStatus(): SyncStatus | null {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   useEffect(() => {
-    const sync = getDesktopBridge()?.sync;
+    const sync = getSyncSource();
     if (!sync) return;
     let live = true;
     void sync.status().then((s) => live && setStatus(s));

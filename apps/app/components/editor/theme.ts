@@ -40,7 +40,8 @@ export const marginTheme = EditorView.theme({
     height: '100%',
     color: 'var(--margin-fg)',
     backgroundColor: 'var(--margin-bg)',
-    fontSize: '18px',
+    // 18px, scaled by iOS Dynamic Type via --margin-font-scale (MarkdownEditor `fontScale`).
+    fontSize: 'calc(18px * var(--margin-font-scale, 1))',
   },
   '&.cm-focused': { outline: 'none' },
   '.cm-scroller': {

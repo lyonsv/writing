@@ -1,5 +1,7 @@
 import { DESKTOP_BRIDGE_KEY, type DesktopBridge, type DocumentStore, type SettingsStore } from '@margin/core';
 
+import type { SyncSource } from './syncSource';
+
 import { desktopBackend, storeBackend, type DocumentBackend } from './documentBackend';
 import { desktopLibraryBackend, storeLibraryBackend, type LibraryBackend } from './libraryBackend';
 import { createLocalStorageStore } from './localStorageStore';
@@ -54,4 +56,9 @@ export function getLibraryBackend(): LibraryBackend {
     library = bridge ? desktopLibraryBackend(bridge) : storeLibraryBackend(getDocumentStore());
   }
   return library;
+}
+
+/** Sync status source: the desktop main process; none in a plain browser. */
+export function getSyncSource(): SyncSource | undefined {
+  return getDesktopBridge()?.sync;
 }

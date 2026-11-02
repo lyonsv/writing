@@ -1,11 +1,8 @@
 import type { AccountBackend } from '@margin/core';
 
-import { unavailableAccountBackend } from './unavailable';
+import { account } from '../native/services';
 
-let backend: AccountBackend | undefined;
-
-/** iOS sign-in arrives in M6 (expo-auth-session with margin://auth/callback, token in expo-secure-store). */
+/** iOS: margin:// sign-in through an auth session, token in the Keychain (ADR 0017). */
 export function getAccountBackend(): AccountBackend {
-  backend ??= unavailableAccountBackend('Sign-in on iOS arrives in a later version.');
-  return backend;
+  return account;
 }

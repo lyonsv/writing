@@ -12,7 +12,7 @@ import {
   type TreeNode,
 } from '@margin/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { DropArea, RowShell } from './dnd';
 
@@ -44,11 +44,21 @@ export interface SidebarProps {
   onReveal?: (path: string) => Promise<void>;
   /** Native context menu if available; null falls back to the in-app menu. */
   showContextMenu?: (items: ContextMenuItem[]) => Promise<string | null>;
+  /**
+   * Phone layout (iOS library screen): full width, finger-sized rows, larger
+   * type (scales with Dynamic Type), long-press for actions.
+   */
+  touch?: boolean;
+  /** Pull-to-refresh (iOS: sync now). */
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  /** Adds "Move to…" (iOS has no drag-and-drop); the screen shows a folder picker. */
+  onMove?: (path: string) => void;
 }
 
 const KEEP_FOCUS_ON_SUBMIT = { submitBehavior: 'submit', blurOnSubmit: false } as Record<string, unknown>;
 
-type Action = 'open' | 'rename' | 'reveal' | 'trash' | 'new-document' | 'new-folder';
+type Action = 'open' | 'rename' | 'move' | 'reveal' | 'trash' | 'new-document' | 'new-folder';
 
 /**
  * The library sidebar, in React Native primitives so it can run on iOS (M6).
@@ -57,6 +67,7 @@ type Action = 'open' | 'rename' | 'reveal' | 'trash' | 'new-document' | 'new-fol
  */
 export function Sidebar(props: SidebarProps) {
   const { tree, activePath, colors } = props;
+  const touch = props.touch === true;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<{ path: string; kind: 'document' | 'folder'; value: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +185,7 @@ export function Sidebar(props: SidebarProps) {
       items.push({ id: 'open', label: 'Open' });
     }
     items.push({ id: 'rename', label: 'Rename…' });
+    if (props.onMove) items.push({ id: 'move', label: 'Move to…' });
     if (props.onReveal) items.push({ id: 'reveal', label: 'Reveal in Finder' });
     items.push({ type: 'separator' }, { id: 'trash', label: props.onReveal ? 'Move to Trash' : 'Delete' });
     return items;
@@ -189,6 +201,8 @@ export function Sidebar(props: SidebarProps) {
           kind: node.kind,
           value: node.kind === 'document' ? displayName(node.path) : node.name,
         });
+      case 'move':
+        return props.onMove?.(node.path);
       case 'reveal':
         return run(() => props.onReveal!(node.path));
       case 'trash':
@@ -216,10 +230,14 @@ export function Sidebar(props: SidebarProps) {
   };
 
   return (
-    <View testID="library-sidebar" {...keyboardProps} style={[styles.root, { backgroundColor: colors.background, paddingTop: props.topInset ?? 0 }]}>
+    <View
+      testID="library-sidebar"
+      {...keyboardProps}
+      style={[styles.root, touch && styles.rootTouch, { backgroundColor: colors.background, paddingTop: props.topInset ?? 0 }]}
+    >
       <View style={styles.header}>
         <Pressable testID="library-new-document" onPress={() => void run(() => props.onCreateDocument(''))} hitSlop={6}>
-          <Text style={[styles.headerButton, { color: colors.muted }]}>New</Text>
+          <Text style={[styles.headerButton, touch && styles.headerButtonTouch, { color: colors.muted }]}>New</Text>
         </Pressable>
         <Pressable
           testID="library-new-folder"
@@ -231,7 +249,7 @@ export function Sidebar(props: SidebarProps) {
           }
           hitSlop={6}
         >
-          <Text style={[styles.headerButton, { color: colors.muted }]}>Folder</Text>
+          <Text style={[styles.headerButton, touch && styles.headerButtonTouch, { color: colors.muted }]}>Folder</Text>
         </Pressable>
         <View style={{ flex: 1 }} />
         <Pressable
@@ -240,12 +258,19 @@ export function Sidebar(props: SidebarProps) {
           hitSlop={6}
           accessibilityLabel={`Sorted by ${props.sort === 'name' ? 'name' : 'date modified'}`}
         >
-          <Text style={[styles.headerButton, { color: colors.muted }]}>{props.sort === 'name' ? 'A–Z' : 'Recent'}</Text>
+          <Text style={[styles.headerButton, touch && styles.headerButtonTouch, { color: colors.muted }]}>{props.sort === 'name' ? 'A–Z' : 'Recent'}</Text>
         </Pressable>
       </View>
 
       <DropArea onDropPath={(dragged) => move(dragged, '')}>
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 24 }}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            props.onRefresh ? <RefreshControl refreshing={props.refreshing ?? false} onRefresh={props.onRefresh} tintColor={colors.muted} /> : undefined
+          }
+        >
           {rows.map(({ node, depth, expanded: isOpen }) => {
             const active = node.kind === 'document' && node.path === activePath;
             const editing = renaming?.path === node.path;
@@ -265,6 +290,11 @@ export function Sidebar(props: SidebarProps) {
                     else rowRefs.current.delete(node.path);
                   }}
                   onPress={() => (node.kind === 'folder' ? toggle(node.path) : props.onOpen(node.path))}
+                  // On iOS the inner Pressable takes the touch, so the long press lives here
+                  // (RowShell's own onLongPress would never fire). Web uses right-click instead.
+                  onLongPress={touch || Platform.OS !== 'web' ? () => void openMenu(node) : undefined}
+                  delayLongPress={400}
+                  accessibilityHint={touch ? 'Long press for actions' : undefined}
                   onFocus={() => {
                     setCursor(node.path);
                     setRowFocused(true);
@@ -272,7 +302,8 @@ export function Sidebar(props: SidebarProps) {
                   onBlur={() => setRowFocused(false)}
                   style={[
                     styles.row,
-                    { paddingLeft: 12 + depth * 14 },
+                    touch && styles.rowTouch,
+                    { paddingLeft: 12 + depth * (touch ? 20 : 14) },
                     active && { backgroundColor: colors.active },
                     // Keyboard cursor: a hairline frame (always reserved, so nothing shifts).
                     { borderColor: rowFocused && cursor === node.path ? colors.muted : 'transparent' },
@@ -280,7 +311,7 @@ export function Sidebar(props: SidebarProps) {
                   accessibilityRole="button"
                   accessibilityState={{ selected: active, expanded: node.kind === 'folder' ? isOpen : undefined }}
                 >
-                  <Text style={[styles.disclosure, { color: colors.muted }]}>
+                  <Text style={[styles.disclosure, touch && styles.disclosureTouch, { color: colors.muted }]}>
                     {node.kind === 'folder' ? (isOpen ? '▾' : '▸') : ''}
                   </Text>
                   {editing ? (
@@ -304,10 +335,10 @@ export function Sidebar(props: SidebarProps) {
                           setError(null);
                         }
                       }}
-                      style={[styles.input, { color: colors.text, borderColor: colors.muted }]}
+                      style={[styles.input, touch && styles.labelTouch, { color: colors.text, borderColor: colors.muted }]}
                     />
                   ) : (
-                    <Text numberOfLines={1} style={[styles.label, { color: active ? colors.text : colors.text }]}>
+                    <Text numberOfLines={1} style={[styles.label, touch && styles.labelTouch, { color: colors.text }]}>
                       {label}
                     </Text>
                   )}
@@ -346,9 +377,10 @@ export function Sidebar(props: SidebarProps) {
                     setMenu(null);
                     void perform(node, item.id as Action);
                   }}
-                  style={styles.menuItem}
+                  style={[styles.menuItem, touch && styles.menuItemTouch]}
+                  accessibilityRole="button"
                 >
-                  <Text style={{ color: item.id === 'trash' ? colors.danger : colors.text, fontSize: 13 }}>{item.label}</Text>
+                  <Text style={{ color: item.id === 'trash' ? colors.danger : colors.text, fontSize: touch ? 17 : 13 }}>{item.label}</Text>
                 </Pressable>
               ),
             )}
@@ -361,6 +393,12 @@ export function Sidebar(props: SidebarProps) {
 
 const styles = StyleSheet.create({
   root: { width: 260, height: '100%' },
+  rootTouch: { width: '100%', flex: 1 },
+  rowTouch: { paddingVertical: 11, marginHorizontal: 8, borderRadius: 8 },
+  labelTouch: { fontSize: 17 },
+  disclosureTouch: { width: 22, fontSize: 13 },
+  headerButtonTouch: { fontSize: 16, paddingVertical: 6 },
+  menuItemTouch: { paddingVertical: 12, paddingHorizontal: 18 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, gap: 14 },
   headerButton: { fontSize: 12, letterSpacing: 0.2 },
   row: {

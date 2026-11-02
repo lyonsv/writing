@@ -146,7 +146,9 @@ class TypewriterPlugin {
 
   update(u: ViewUpdate): void {
     if (!u.state.facet(typewriterEnabled)) return;
-    if (!u.selectionSet && !u.docChanged) return;
+    // A resize (e.g. the iOS keyboard shrinking the WebView) re-centres within the visible area.
+    const resized = u.geometryChanged && u.view.hasFocus;
+    if (!u.selectionSet && !u.docChanged && !resized) return;
     if (u.transactions.some((tr) => tr.isUserEvent('select.pointer'))) {
       this.pointerPending = true;
       return;

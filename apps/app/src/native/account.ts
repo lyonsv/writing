@@ -58,7 +58,6 @@ export class AccountError extends Error {
 
 const SESSION_KEY = 'margin.session.v1';
 const DEVICE_ID = /^[A-Za-z0-9_-]{22}$/;
-export const DEFAULT_SERVER_URL = 'https://margin-sync.vercel.app';
 
 export const SIGN_OUT_UNCONFIRMED =
   'Signed out on this iPhone, but the server didn’t confirm it, so this device’s token may still be active. ' +

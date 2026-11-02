@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 /**
- * Native (iOS) fallback: no drag-and-drop. A long press opens the row's
- * actions (rename lets you type a different folder, see ADR 0009); moving by
- * drag is web/desktop only. The web version lives in dnd.web.tsx.
+ * Native (iOS) fallback: no drag-and-drop. A long press on the row (handled by
+ * the row's own Pressable in Sidebar.tsx) opens its actions, including
+ * "Move to…" (a folder picker). The web version lives in dnd.web.tsx.
  */
 export interface RowShellProps {
   path: string;
@@ -15,12 +15,8 @@ export interface RowShellProps {
   children: ReactNode;
 }
 
-export function RowShell({ testID, onContextMenu, children }: RowShellProps) {
-  return (
-    <Pressable testID={testID} onLongPress={onContextMenu} delayLongPress={400}>
-      {children}
-    </Pressable>
-  );
+export function RowShell({ testID, children }: RowShellProps) {
+  return <View testID={testID}>{children}</View>;
 }
 
 export function DropArea({ children }: { onDropPath: (dragged: string) => void; children: ReactNode }) {

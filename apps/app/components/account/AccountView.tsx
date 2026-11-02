@@ -8,6 +8,8 @@ export interface AccountViewProps {
   backend: AccountBackend;
   colors: SidebarColors;
   onClose: () => void;
+  /** Phone settings screen: a plain section (no overlay, no Close button). */
+  inline?: boolean;
 }
 
 const when = (iso: string) => {
@@ -23,7 +25,7 @@ const message = (e: unknown) =>
  * with its own `AccountBackend`. Shows who is signed in, the devices with
  * access, and lets you revoke any of them. Never sees a token.
  */
-export function AccountView({ backend, colors, onClose }: AccountViewProps) {
+export function AccountView({ backend, colors, onClose, inline = false }: AccountViewProps) {
   const [status, setStatus] = useState<AccountStatus | null>(null);
   const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -75,13 +77,19 @@ export function AccountView({ backend, colors, onClose }: AccountViewProps) {
   const shownError = error ?? (status?.state === 'signed-out' ? status.error : undefined);
 
   return (
-    <Pressable testID="account-view" style={styles.backdrop} onPress={onClose}>
-      <Pressable style={[styles.panel, { backgroundColor: colors.background, borderColor: colors.muted }]} onPress={() => {}}>
+    <Pressable testID="account-view" style={inline ? styles.inline : styles.backdrop} onPress={inline ? undefined : onClose} disabled={inline}>
+      <Pressable
+        style={inline ? styles.inlinePanel : [styles.panel, { backgroundColor: colors.background, borderColor: colors.muted }]}
+        onPress={() => {}}
+        disabled={inline}
+      >
         <View style={styles.header}>
           <Text style={[styles.title, text]}>Account</Text>
-          <Pressable testID="account-close" onPress={onClose} hitSlop={8} accessibilityLabel="Close">
-            <Text style={[styles.button, muted]}>Close</Text>
-          </Pressable>
+          {inline ? null : (
+            <Pressable testID="account-close" onPress={onClose} hitSlop={8} accessibilityLabel="Close">
+              <Text style={[styles.button, muted]}>Close</Text>
+            </Pressable>
+          )}
         </View>
 
         {!status ? null : status.state === 'signed-in' ? (
@@ -93,7 +101,7 @@ export function AccountView({ backend, colors, onClose }: AccountViewProps) {
               {status.serverUrl}
             </Text>
             <Text style={[styles.section, muted]}>DEVICES</Text>
-            <ScrollView style={styles.list}>
+            <ScrollView style={styles.list} scrollEnabled={!inline}>
               {(devices ?? []).map((d) => (
                 <View key={d.id} testID={`account-device:${d.id}`} style={styles.device}>
                   <View style={{ flex: 1 }}>
@@ -105,7 +113,13 @@ export function AccountView({ backend, colors, onClose }: AccountViewProps) {
                       Added {when(d.createdAt)} · last used {when(d.lastUsedAt)} · expires {when(d.expiresAt)}
                     </Text>
                   </View>
-                  <Pressable testID={`account-revoke:${d.id}`} onPress={() => void revoke(d.id)} hitSlop={6}>
+                  <Pressable
+                    testID={`account-revoke:${d.id}`}
+                    onPress={() => void revoke(d.id)}
+                    hitSlop={10}
+                    accessibilityRole="button"
+                    accessibilityLabel={confirming === d.id ? `Confirm revoking ${d.name}` : `Revoke ${d.name}`}
+                  >
                     <Text style={[styles.button, { color: colors.danger }]}>{confirming === d.id ? 'Confirm' : 'Revoke'}</Text>
                   </Pressable>
                 </View>
@@ -122,7 +136,7 @@ export function AccountView({ backend, colors, onClose }: AccountViewProps) {
               {status.state === 'signing-in' ? 'Waiting for your browser…' : 'Not signed in'}
             </Text>
             <Text style={[styles.small, muted]}>
-              Your documents stay on this device whether or not you sign in. Signing in will let Margin sync them (coming soon).
+              Your documents stay on this device whether or not you sign in. Signing in syncs them with your other devices through your Margin server.
             </Text>
             {backend.available ? (
               <Pressable
@@ -148,6 +162,8 @@ export function AccountView({ backend, colors, onClose }: AccountViewProps) {
 
 const styles = StyleSheet.create({
   backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', paddingTop: '10%' },
+  inline: { width: '100%' },
+  inlinePanel: { width: '100%', paddingVertical: 8 },
   panel: { width: 520, maxWidth: '90%', maxHeight: '70%', borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, padding: 16 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   title: { fontSize: 16, fontWeight: '600' },

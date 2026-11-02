@@ -61,6 +61,23 @@ export interface MarkdownEditorProps {
   onCommand?: (command: EditorCommand) => Promise<void>;
   /** Debounce interval in ms. */
   debounceMs?: number;
+  /**
+   * iOS: `@font-face` CSS with the font inlined as data: URIs (built natively
+   * from the bundled assets; ADR 0016). Without it the woff2 files are loaded
+   * by URL, which works on web/Electron but not reliably inside the WebView.
+   */
+  fontCss?: string;
+  /** Reports whether IBM Plex Mono actually loaded (diagnostics). */
+  onFontStatus?: (status: string) => Promise<void>;
+  /** Text size multiplier (iOS Dynamic Type), clamped to 0.8–1.6. */
+  fontScale?: number;
+  /** Changing this asks the editor to flush now; it answers with `onFlushed(id)` after its `onChange`. */
+  flushRequest?: number;
+  onFlushed?: (id: number) => Promise<void>;
+  /** Changing this blurs the editor (dismisses the iOS keyboard). */
+  blurRequest?: number;
+  /** Changing this focuses the editor. */
+  focusRequest?: number;
   dom?: DOMProps;
 }
 
@@ -69,12 +86,23 @@ const STYLE_ID = 'margin-editor-vars';
 /** Marks transactions that load external content, so they aren't echoed back as edits. */
 const externalLoad = Annotation.define<boolean>();
 
-function ensureGlobalStyles(): void {
+function ensureGlobalStyles(fontCss: string | undefined): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  style.textContent = `${fontFaceCss()}\n${EDITOR_CSS_VARS}`;
+  style.textContent = `${fontCss ?? fontFaceCss()}\n${EDITOR_CSS_VARS}${isNativeWebView() ? NATIVE_CSS : ''}`;
   document.head.appendChild(style);
+}
+
+/** Inside the iOS WebView the page itself must never scroll; CodeMirror's scroller does. */
+const NATIVE_CSS = `
+html, body { overflow: hidden; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+#root { height: 100%; }
+`;
+
+/** True inside an Expo DOM component on iOS (a WKWebView with the RN bridge). */
+function isNativeWebView(): boolean {
+  return typeof window !== 'undefined' && 'ReactNativeWebView' in window;
 }
 
 function focusConfig(focusMode: boolean, scope: FocusScope | null): Extension {
@@ -111,6 +139,13 @@ export default function MarkdownEditor({
   typewriter = false,
   onCommand,
   debounceMs = 300,
+  fontCss,
+  onFontStatus,
+  fontScale,
+  flushRequest,
+  onFlushed,
+  blurRequest,
+  focusRequest,
 }: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -129,7 +164,7 @@ export default function MarkdownEditor({
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    ensureGlobalStyles();
+    ensureGlobalStyles(fontCss);
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const flush = () => {
@@ -207,6 +242,18 @@ export default function MarkdownEditor({
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush();
     };
+    // iOS: the keyboard shrinks the WebView. Undo any page scroll WebKit did to
+    // reveal the caret, and keep the caret visible (typewriter mode re-centres
+    // itself on the resize, see focus.ts).
+    const onResize = () => {
+      if (!isNativeWebView()) return;
+      window.scrollTo(0, 0);
+      if (view.hasFocus && !view.state.facet(typewriterEnabled)) {
+        view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'nearest', yMargin: 48 }) });
+      }
+    };
+    window.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
     const takeFocus = () => view.focus();
     window.addEventListener(FOCUS_EDITOR_EVENT, takeFocus);
     window.addEventListener(FLUSH_EVENT, flush);
@@ -221,6 +268,8 @@ export default function MarkdownEditor({
       window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
       flush();
       viewRef.current = null;
       view.destroy();
@@ -258,6 +307,51 @@ export default function MarkdownEditor({
       ],
     });
   }, [typewriter]);
+
+  // Font check: report whether the writing font really loaded (iOS diagnostics).
+  const onFontStatusRef = useRef(onFontStatus);
+  onFontStatusRef.current = onFontStatus;
+  useEffect(() => {
+    if (!onFontStatusRef.current || typeof document === 'undefined' || !document.fonts) return;
+    let live = true;
+    void document.fonts
+      .load("18px 'IBM Plex Mono'")
+      .then((faces) => {
+        if (!live) return;
+        const ok = faces.length > 0 && document.fonts.check("18px 'IBM Plex Mono'");
+        void onFontStatusRef.current?.(ok ? `IBM Plex Mono loaded (${fontCss ? 'inline' : 'url'})` : 'IBM Plex Mono NOT loaded (fallback font)');
+      })
+      .catch((e: unknown) => live && void onFontStatusRef.current?.(`IBM Plex Mono failed: ${String(e)}`));
+    return () => {
+      live = false;
+    };
+  }, [fontCss]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const scale = Math.min(1.6, Math.max(0.8, fontScale ?? 1));
+    document.documentElement.style.setProperty('--margin-font-scale', String(scale));
+  }, [fontScale]);
+
+  // Flush on request from the native side (app going to the background, switching documents).
+  const onFlushedRef = useRef(onFlushed);
+  onFlushedRef.current = onFlushed;
+  useEffect(() => {
+    if (flushRequest === undefined || flushRequest === 0) return;
+    flushRef.current();
+    void onFlushedRef.current?.(flushRequest);
+  }, [flushRequest]);
+
+  useEffect(() => {
+    if (blurRequest) {
+      flushRef.current();
+      viewRef.current?.contentDOM.blur();
+    }
+  }, [blurRequest]);
+
+  useEffect(() => {
+    if (focusRequest) viewRef.current?.focus();
+  }, [focusRequest]);
 
   const lastExternalToken = useRef<string | null>(null);
   useEffect(() => {
