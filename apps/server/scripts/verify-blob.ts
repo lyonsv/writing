@@ -20,6 +20,7 @@ import path from 'node:path';
 import { BlobPreconditionFailedError, del, get, list, put } from '@vercel/blob';
 
 import { BlobStore } from '../src/blobStore';
+import { blobStoreIdFromEnv } from '../src/config';
 import { PreconditionFailedError } from '../src/store';
 import { SyncConflictError, SyncRepository } from '../src/sync';
 
@@ -39,6 +40,16 @@ if (!process.env.BLOB_READ_WRITE_TOKEN) {
 if (!process.env.BLOB_READ_WRITE_TOKEN) {
   console.error('No BLOB_READ_WRITE_TOKEN (is the store connected to margin-sync for Preview?)');
   process.exit(2);
+}
+// Never run against production data (ADR 0014): the target must be identifiable and not the production store.
+{
+  const mine = blobStoreIdFromEnv(process.env);
+  const prod = process.env.PRODUCTION_BLOB_STORE_ID?.replace(/^store_/i, '').toLowerCase();
+  if (!prod || !mine || mine === prod) {
+    console.error(`Refusing to run: ${!prod ? 'PRODUCTION_BLOB_STORE_ID unknown' : !mine ? 'cannot identify the target store' : 'target is the PRODUCTION store'}`);
+    process.exit(2);
+  }
+  console.log(`target store: store_${mine} (not production)`);
 }
 
 const prefix = `verify-${randomBytes(6).toString('hex')}/`;
