@@ -81,3 +81,11 @@ export async function stubDialogs(app: ElectronApplication, cfg: { choose: strin
 export function dialogCalls(app: ElectronApplication): Promise<Array<{ message: string; buttons: string[]; defaultId: number }>> {
   return app.evaluate(() => (globalThis as unknown as { __dialogCalls: never[] }).__dialogCalls ?? []);
 }
+
+/** The library-relative path of the document open in the editor (from the workspace's aria-label). */
+export async function currentDocument(page: import('@playwright/test').Page): Promise<string> {
+  const handle = page.getByTestId('workspace');
+  await handle.and(page.locator('[aria-label^="Editing "]')).waitFor({ timeout: 15_000 });
+  const label = (await handle.getAttribute('aria-label')) ?? '';
+  return label.replace(/^Editing /, '');
+}

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test';
 
-import { launch, newLibrary, quitAndWait } from './launch';
+import { currentDocument, launch, newLibrary, quitAndWait } from './launch';
 
 let app: ElectronApplication;
 let page: Page;
@@ -48,7 +48,7 @@ test('types into the editor and saves to a .md file', async () => {
   await expect(editor).toContainText('Hello Margin');
   await expect(editor).toContainText('Written by the smoke test.');
 
-  const file = path.join(libraryDir, 'Untitled.md');
+  const file = path.join(libraryDir, await currentDocument(page));
   await expect.poll(() => (existsSync(file) ? readFileSync(file, 'utf8') : null), { timeout: 10_000 }).toBe(text);
 });
 

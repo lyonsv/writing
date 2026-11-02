@@ -7,7 +7,10 @@ import path from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
-import { dialogCalls, launch, newLibrary, quitAndWait, stubDialogs } from './launch';
+import { currentDocument, dialogCalls, launch, newLibrary, quitAndWait, stubDialogs } from './launch';
+
+const openedFile = async (page: import('@playwright/test').Page, lib: string) =>
+  path.join(lib, await currentDocument(page));
 
 const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : null);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -28,9 +31,9 @@ test('existing content is loaded and not overwritten on startup', async () => {
 
 test('typing then quitting immediately (before the debounce) saves the text', async () => {
   const lib = newLibrary();
-  const file = path.join(lib, 'Untitled.md');
   const app = await launch(lib);
   const page = await app.firstWindow();
+  const file = await openedFile(page, lib);
   await page.locator('.cm-content').click();
   await page.keyboard.type('saved at quit');
   await quitAndWait(app);
@@ -39,9 +42,9 @@ test('typing then quitting immediately (before the debounce) saves the text', as
 
 test('typing then closing the window immediately saves the text', async () => {
   const lib = newLibrary();
-  const file = path.join(lib, 'Untitled.md');
   const app = await launch(lib);
   const page = await app.firstWindow();
+  const file = await openedFile(page, lib);
   await page.locator('.cm-content').click();
   await page.keyboard.type('saved at close');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
@@ -161,9 +164,9 @@ test('only .md documents can be written; hidden and escaping paths are refused',
 
 test('a failing save shows "Not saved", retries, and recovers', async () => {
   const lib = newLibrary();
-  const file = path.join(lib, 'Untitled.md');
   const app = await launch(lib);
   const page = await app.firstWindow();
+  const file = await openedFile(page, lib);
   await expect(page.locator('.cm-content')).toBeVisible();
   await expect.poll(() => read(file)).toBe('');
   chmodSync(lib, 0o555); // atomic writes need to create a temp file here
@@ -185,9 +188,9 @@ test('filesystems without hard links (exFAT, SMB): create, save and conflict cop
   // hdiutil can't create a real exFAT volume in CI sandboxes, so main is told
   // to fail link() with ENOTSUP, exactly as exFAT does.
   const lib = newLibrary();
-  const file = path.join(lib, 'Untitled.md');
   const app = await launch(lib, { MARGIN_TEST_NO_HARDLINKS: '1' });
   const page = await app.firstWindow();
+  const file = await openedFile(page, lib);
   await expect(page.locator('.cm-content')).toBeVisible();
   await expect.poll(() => read(file)).toBe('');
   await page.locator('.cm-content').click();
@@ -209,9 +212,9 @@ test('filesystems without hard links (exFAT, SMB): create, save and conflict cop
 
 test('a hung renderer does not block quit beyond the flush timeout', async () => {
   const lib = newLibrary();
-  const file = path.join(lib, 'Untitled.md');
   const app = await launch(lib);
   const page = await app.firstWindow();
+  const file = await openedFile(page, lib);
   await page.locator('.cm-content').click();
   await page.keyboard.type('saved before the hang');
   await expect.poll(() => read(file)).toBe('saved before the hang');
@@ -255,9 +258,9 @@ test('closing a window whose renderer is hung destroys it after the timeout', as
 /** Opens a fresh library, makes it read-only and types, so the save keeps failing. */
 async function failingSave(text: string) {
   const lib = newLibrary();
-  const file = path.join(lib, 'Untitled.md');
   const app = await launch(lib);
   const page = await app.firstWindow();
+  const file = await openedFile(page, lib);
   await expect(page.locator('.cm-content')).toBeVisible();
   await expect.poll(() => read(file)).toBe('');
   chmodSync(lib, 0o555);
@@ -292,13 +295,13 @@ test('quitting while a save is failing asks first; Cancel (the default) keeps th
 });
 
 test('quitting while a save is failing: "Save a Copy…" writes the text elsewhere, then quits', async () => {
-  const { app, lib, restore } = await failingSave('rescue me');
+  const { app, file, restore } = await failingSave('rescue me');
   const copy = path.join(newLibrary(), 'rescued.md');
   try {
     await stubDialogs(app, { choose: 'Save a Copy…', savePath: copy });
     await quitAndWait(app);
     expect(read(copy)).toBe('rescue me');
-    expect(read(path.join(lib, 'Untitled.md'))).toBe('');
+    expect(read(file)).toBe('');
   } finally {
     restore();
   }

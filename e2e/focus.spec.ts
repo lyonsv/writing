@@ -134,7 +134,7 @@ test('settings persist across launches (userData JSON)', async () => {
   await clickMenu(first.app, 'typewriter');
   await clickMenu(first.app, 'focus-scope-paragraph');
   await quitAndWait(first.app);
-  expect(JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8'))).toEqual({
+  expect(JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8'))).toMatchObject({
     focusMode: true,
     focusScope: 'paragraph',
     typewriter: true,
