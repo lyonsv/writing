@@ -1,0 +1,15 @@
+# Never upload local secrets or build outputs with `vercel deploy` (ADR 0014).
+.env*
+!.env.example
+**/.env*
+.vercel
+node_modules
+**/node_modules
+apps/desktop/release
+apps/desktop/dist
+apps/app/dist
+apps/app/.expo
+test-results
+playwright-report
+.claude
+*.log

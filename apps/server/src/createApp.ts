@@ -5,17 +5,17 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { HTTPException } from 'hono/http-exception';
 import { matchedRoutes } from 'hono/route';
 
-import { CodeRepository } from './codes';
-import { NonceRepository } from './nonces';
-import { MAX_DOCUMENT_BYTES, SyncConflictError, SyncLimitError, SyncRepository, type Precondition, type SyncEntry } from './sync';
-import { isSyncPath } from './syncPaths';
-import { ConfigError, isAllowed, type Config } from './config';
-import { PKCE_CHALLENGE, PKCE_VERIFIER, Pepper, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto';
-import { DeviceRepository, TOKEN_TTL_MS, cleanDeviceName, toDeviceInfo, type DeviceRecord, type Identity } from './devices';
-import { GitHubError, authorizeUrl, fetchGitHubIdentity, type Fetch } from './github';
-import { RateLimiter } from './rateLimit';
-import { isAllowedNativeRedirect, safeReturnPath } from './redirects';
-import type { KeyValueStore } from './store';
+import { CodeRepository } from './codes.js';
+import { NonceRepository } from './nonces.js';
+import { MAX_DOCUMENT_BYTES, SyncConflictError, SyncLimitError, SyncRepository, type Precondition, type SyncEntry } from './sync.js';
+import { isSyncPath } from './syncPaths.js';
+import { ConfigError, isAllowed, type Config } from './config.js';
+import { PKCE_CHALLENGE, PKCE_VERIFIER, Pepper, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto.js';
+import { DeviceRepository, TOKEN_TTL_MS, cleanDeviceName, toDeviceInfo, type DeviceRecord, type Identity } from './devices.js';
+import { GitHubError, authorizeUrl, fetchGitHubIdentity, type Fetch } from './github.js';
+import { RateLimiter } from './rateLimit.js';
+import { isAllowedNativeRedirect, safeReturnPath } from './redirects.js';
+import type { KeyValueStore } from './store.js';
 
 /**
  * The Margin API. See docs/decisions/0010-auth-model.md.
@@ -526,7 +526,13 @@ export function createApp(deps: AppDeps): Hono<Env> {
     if (error instanceof HTTPException && error.status < 500) return c.json({ error: 'invalid_request' }, error.status);
     if (error instanceof ConfigError) log('config.error', { message: error.message });
     else log('server.error', { name: error.name, message: error.message.slice(0, 200) });
-    return c.json({ error: 'server_error' }, 500);
+    // Errors can be raised before the hardening middleware runs (e.g. config): set its headers here too.
+    return c.json({ error: 'server_error' }, 500, {
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+    });
   });
 
   return app;

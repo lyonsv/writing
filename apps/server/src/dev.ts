@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-import { createApp } from './app';
-import { loadConfig } from './config';
-import { storeFromEnv } from './env';
-import { listen } from './local';
+import { createApp } from './createApp.js';
+import { loadConfig } from './config.js';
+import { storeFromEnv } from './env.js';
+import { listen } from './local.js';
 
 /**
  * Local dev server: `pnpm dev:server` (no Vercel login needed). Reads

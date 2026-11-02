@@ -220,3 +220,25 @@ describe('BlobStore', () => {
     expect(await new BlobStore(client).list('auth/')).toEqual(['auth/a', 'auth/b']);
   });
 });
+
+describe('deployability', () => {
+  it('relative imports in src carry .js extensions (Vercel runs src as native ESM; extensionless imports crash at runtime)', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const dir = new URL('../src/', import.meta.url);
+    const offenders: string[] = [];
+    for (const f of readdirSync(dir).filter((x) => x.endsWith('.ts'))) {
+      const text = readFileSync(new URL(f, dir), 'utf8');
+      for (const m of text.matchAll(/(?:from|import\()\s*'(\.{1,2}\/[^']+)'/g)) {
+        if (!m[1]!.endsWith('.js')) offenders.push(`${f}: ${m[1]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the Vercel entry (server.ts) default-exports the Hono app', async () => {
+    process.env.MARGIN_STORE = 'memory';
+    const mod = (await import('../server')) as { default: { fetch?: unknown } };
+    expect(typeof mod.default.fetch).toBe('function');
+    delete process.env.MARGIN_STORE;
+  });
+});

@@ -1,7 +1,7 @@
 import type { DeviceInfo } from '@margin/core';
 
-import { randomToken, type Pepper } from './crypto';
-import { PreconditionFailedError, type KeyValueStore } from './store';
+import { randomToken, type Pepper } from './crypto.js';
+import { PreconditionFailedError, type KeyValueStore } from './store.js';
 
 /**
  * Device tokens (ADR 0012).

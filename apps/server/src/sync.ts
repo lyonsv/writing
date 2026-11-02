@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { PreconditionFailedError, type KeyValueStore } from './store';
+import { PreconditionFailedError, type KeyValueStore } from './store.js';
 
 /**
  * Sync storage (ADR 0013).

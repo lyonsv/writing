@@ -15,11 +15,11 @@ Guidance for AI agents (and humans) continuing development.
 - Cross-platform first: shared logic lives in `packages/*`; platform-specific code uses `.web.tsx` / `.native.tsx` splits rather than runtime branching.
 - Never commit secrets. Env vars are documented in `.env.example`; server secrets will live in Vercel env vars only.
 - Never weaken the save pipeline guarantees in ADR 0006; `e2e/datasafety.spec.ts` must stay green.
-- **Server auth (ADR 0010):** every route goes through the single `requireAuth` middleware in `apps/server/src/app.ts`; only the auth routes in `PUBLIC_ROUTES` (native start GET/POST, web start, GitHub callback, code exchange) are public. Add routes to that app, never as separate `api/*.ts` files, and never add to `PUBLIC_ROUTES` without an ADR. ("Don't rely on middleware" in best-practices §6 means Vercel *Routing* Middleware, not this in-function gate.) Never log tokens, codes, `state` or URLs of auth callbacks (so no Hono `logger()`). Every new route needs an entry in `ROUTE_BODY_LIMITS` (a test enforces it). Blob keys under `auth/` belong to auth (ADR 0012).
+- **Server auth (ADR 0010):** every route goes through the single `requireAuth` middleware in `apps/server/src/createApp.ts`; only the auth routes in `PUBLIC_ROUTES` (native start GET/POST, web start, GitHub callback, code exchange) are public. Add routes to that app, never as separate `api/*.ts` files, and never add to `PUBLIC_ROUTES` without an ADR. ("Don't rely on middleware" in best-practices §6 means Vercel *Routing* Middleware, not this in-function gate.) Never log tokens, codes, `state` or URLs of auth callbacks (so no Hono `logger()`). Every new route needs an entry in `ROUTE_BODY_LIMITS` (a test enforces it). Blob keys under `auth/` belong to auth (ADR 0012).
 - **Sync (ADR 0013):** never write library files from sync except through `FileSystemLibrary.*ForSync` (per-path queue + hash guard, no `known` update) and never delete except to the Trash with a hash guard. Any change to `planSync`/`runSync` must keep `packages/core/test/sync.test.ts` green, including the randomised simulation (`SYNC_SEEDS=3000` for a longer run). Server sync keys live under `sync/`; the server rejects blind overwrites (428).
 - **Tokens stay in the Electron main process** (ADR 0012). The renderer gets `AccountStatus` / `DeviceInfo` only; authenticated calls go through `AccountManager.request` in main.
 - `apps/server` imports only *types* from `@margin/core` (core ships raw TS, which the Vercel build isn't guaranteed to compile). Duplicate a runtime constant if needed, with a test that it matches.
-- Don't deploy to Vercel or create OAuth Apps; document owner steps in `docs/server-setup.md`.
+- Deploys: previews only (`npx vercel@latest deploy` from the repo root; the root is linked to `margin-sync`, ADR 0014). Never `--prod`, never change deployment protection, never set or print the GitHub OAuth secrets; the owner does that (`docs/server-setup.md`). After storage changes run `pnpm --filter @margin/server verify:blob` against the real store. `.vercelignore` keeps `.env*` out of uploads.
 
 ## Commands
 Run everything from the repo root (Node >= 22, pnpm 10).
@@ -68,12 +68,13 @@ apps/desktop/             Electron 45 shell
   scripts/                build.mjs (esbuild), dev.mjs
   electron-builder.yml    macOS packaging
 apps/server/              Hono app for Vercel Functions (Node, Fluid Compute); auth only so far (M4)
-  src/app.ts              routes + the one auth gate (requireAuth, PUBLIC_ROUTES)
+  src/createApp.ts        routes + the one auth gate (requireAuth, PUBLIC_ROUTES)
   src/devices.ts codes.ts nonces.ts  device tokens, one-time codes, OAuth state nonces (ETag-safe, HMAC-keyed)
   src/sync.ts syncPaths.ts  sync manifest CAS + content-addressed objects; server copy of the path rules
   src/store.ts blobStore.ts  KeyValueStore: MemoryStore / private Vercel Blob
   src/config.ts github.ts redirects.ts crypto.ts rateLimit.ts
-  src/index.ts            Vercel entry; src/dev.ts + local.ts local server
+  server.ts               Vercel entry (default-exports the app; must stay at the package root, ADR 0014); src/dev.ts + local.ts local server
+                          Relative imports in apps/server use `.js` extensions: Vercel runs src as native ESM (a test enforces it)
   test/                   Vitest; helpers.ts (mock GitHub via fetch), mockGitHubHttp.ts (real-HTTP mock GitHub,
                           local server, "browser" redirect follower; also used by desktop tests and e2e)
 packages/core/            plain TS: document model, paths, DocumentStore, markdown helpers, bridge contract, account types, sync engine,

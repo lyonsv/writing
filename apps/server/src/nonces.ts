@@ -1,4 +1,4 @@
-import { PreconditionFailedError, type KeyValueStore } from './store';
+import { PreconditionFailedError, type KeyValueStore } from './store.js';
 
 /**
  * Server-side single-use nonces (`auth/states/<hash>.json`) for the OAuth

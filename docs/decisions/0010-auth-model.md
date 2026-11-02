@@ -10,7 +10,7 @@ M5 will put the owner's documents on a server. No route may be exposed without a
 ## Decision
 
 ### Server shape
-- `apps/server` is a **Hono** app (`src/app.ts`) deployed as Vercel Functions on the **Node.js runtime with Fluid Compute** (`vercel.json` `"fluid": true`; `src/index.ts` exports the app for Vercel's zero-config Hono support).
+- `apps/server` is a **Hono** app (`src/createApp.ts`) deployed as Vercel Functions on the **Node.js runtime with Fluid Compute** (`vercel.json` `"fluid": true`; `server.ts` exports the app for Vercel's zero-config Hono support; ADR 0014).
   - **Why Hono rather than plain `api/*.ts` functions:** one place to register a middleware that runs before *every* route (the reason for this ADR), tests that call `app.request()` with no server or Vercel CLI, typed route params, and cookie and body-limit helpers. It is one small dependency with no transitive dependencies.
   - **Local dev without a Vercel login:** `pnpm dev:server` runs the same app under `@hono/node-server` (`src/dev.ts`) with an in-memory store. `vercel dev` would also work, but it needs a login and a linked project.
 - The server imports only **types** from `@margin/core` (which ships raw TS). Shared runtime constants are duplicated and checked by a test.

@@ -58,12 +58,39 @@ pnpm dev:desktop           # in another terminal; Margin › Sign In…
 ```
 The desktop app talks to `http://127.0.0.1:3000` by default. To point it elsewhere, set `MARGIN_SERVER_URL`, or add `"serverUrl": "https://<your-domain>"` to `settings.json` in the app's userData folder (`~/Library/Application Support/Margin/` when packaged).
 
-## 5. Production on Vercel (M8; not done in M4)
-1. Create a **private** Blob store and connect it to the project. Access mode can't be changed later. Use the dashboard (Storage › Blob › Create, access *Private*) or `vercel blob create-store margin --access private`.
-2. Create the Vercel project from this repo with **Root Directory `apps/server`**. Hono is detected automatically, Node.js runtime, Fluid Compute on (`apps/server/vercel.json`).
-3. Set `PUBLIC_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (production OAuth App), `ALLOWED_GITHUB_LOGINS` and `AUTH_SECRET` as **Production** env vars. Preview deployments need their own OAuth App and `PUBLIC_URL`, or should be left without auth vars, so they fail closed.
-4. Deploy, then check: `curl -i https://<domain>/api/me` → `401`, and `/api/auth/native/start` without parameters → `400`.
-5. First real sign-in: confirm GitHub accepts the PKCE parameters (`code_challenge`) for your OAuth App. If the token exchange fails, the logs show `signin.github_failed`.
+## 5. Vercel: what's provisioned, and what's left for you
+Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with the logged-in CLI (`npx vercel@latest`, run from the repo root, which is linked to the project).
+
+**Already done**
+
+| What | Value |
+|---|---|
+| Project | `margin-sync` (scope `vincent-lyons-projects-fe5e48fc`): Root Directory `apps/server`, framework Hono, Node 24.x, Fluid Compute, region iad1 |
+| Production alias | `https://margin-sync.vercel.app` |
+| Blob store | `margin-store` (`store_wIWFdLVUkOUhtb05`, **private**, iad1), connected for Production + Preview → `BLOB_READ_WRITE_TOKEN` |
+| `AUTH_SECRET` | random, sensitive, **different** for Production and Preview (never displayed) |
+| `ALLOWED_GITHUB_LOGINS` | `lyonsv:2531232` (Production, Preview) |
+| `PUBLIC_URL` | `https://margin-sync.vercel.app` (Production). Preview: unset, derived from `VERCEL_URL` |
+| Deployment protection | on (Vercel Authentication for previews). The production alias is reachable directly; the app's own sign-in protects it |
+| Preview deployment | `https://margin-sync-qnofgzm9e-vincent-lyons-projects-fe5e48fc.vercel.app`: every route answers a generic `500 {"error":"server_error"}` because the GitHub variables are missing (fail closed) |
+| Production | an **unintended** first deployment (the CLI sends a project's first deploy to production); it crashes at startup and exposes nothing. Your `--prod` deploy below replaces it |
+
+**Left for you**
+1. Create the production OAuth App (§2) with callback `https://margin-sync.vercel.app/api/auth/github/callback`.
+2. Add its credentials. Each command prompts for the value; nothing lands in shell history:
+   ```sh
+   npx vercel@latest env add GITHUB_CLIENT_ID production
+   npx vercel@latest env add GITHUB_CLIENT_SECRET production --sensitive
+   ```
+   Previews only need these if you want GitHub sign-in on a preview. A preview's callback is its own URL, which changes per deployment, so normally skip this. If you do want them:
+   `npx vercel@latest env add GITHUB_CLIENT_ID preview` and `npx vercel@latest env add GITHUB_CLIENT_SECRET preview --sensitive` (with a separate OAuth App whose callback matches that preview URL).
+3. Deploy production from the repo root:
+   ```sh
+   npx vercel@latest deploy --prod
+   ```
+4. Check it: `curl -s https://margin-sync.vercel.app/api/me` → `401 {"error":"unauthorized"}`. Then, in Margin, set `"serverUrl": "https://margin-sync.vercel.app"` in `~/Library/Application Support/Margin/settings.json` (or `MARGIN_SERVER_URL`) and use Margin › Sign In….
+
+**Checking real-Blob behaviour** (no deploy needed): `pnpm --filter @margin/server verify:blob`. It pulls the Preview env into the git-ignored `apps/server/.env.blob.local`, runs every storage assumption against the real store under a throwaway prefix (10 parallel writers for the CAS checks), and deletes what it wrote. Expect `19/19 checks passed`.
 
 ## Revoking a device
 - **From the app:** Margin › Account and Devices… › **Revoke** (click twice to confirm). Revoking the device you're on signs it out. Margin › Sign Out revokes the current device.

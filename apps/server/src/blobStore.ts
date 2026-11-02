@@ -1,6 +1,6 @@
 import { BlobNotFoundError, BlobPreconditionFailedError, del, get, head, list, put } from '@vercel/blob';
 
-import { PreconditionFailedError, type KeyValueStore, type PutOptions, type StoredItem } from './store';
+import { PreconditionFailedError, type KeyValueStore, type PutOptions, type StoredItem } from './store.js';
 
 /** The subset of `@vercel/blob` we use; injectable so tests can fake it. */
 export interface BlobClient {

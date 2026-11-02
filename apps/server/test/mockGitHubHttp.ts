@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { createApp } from '../src/app';
+import { createApp } from '../src/createApp';
 import type { Config } from '../src/config';
 import { listen } from '../src/local';
 import { MemoryStore } from '../src/store';

@@ -1,5 +1,5 @@
-import type { Config } from './config';
-import type { Identity } from './devices';
+import type { Config } from './config.js';
+import type { Identity } from './devices.js';
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 

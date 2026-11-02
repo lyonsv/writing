@@ -1,5 +1,5 @@
-import { BlobStore } from './blobStore';
-import { MemoryStore, type KeyValueStore } from './store';
+import { BlobStore } from './blobStore.js';
+import { MemoryStore, type KeyValueStore } from './store.js';
 
 /**
  * Picks the storage backend:

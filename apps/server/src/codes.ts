@@ -1,6 +1,6 @@
-import { pkceChallenge, randomToken, safeEqual, type Pepper } from './crypto';
-import { PreconditionFailedError, type KeyValueStore } from './store';
-import type { Identity } from './devices';
+import { pkceChallenge, randomToken, safeEqual, type Pepper } from './crypto.js';
+import { PreconditionFailedError, type KeyValueStore } from './store.js';
+import type { Identity } from './devices.js';
 
 /**
  * One-time authorization codes for the native flow (ADR 0011).

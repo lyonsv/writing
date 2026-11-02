@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_BODY_LIMIT, PUBLIC_ROUTES, ROUTE_BODY_LIMITS, createApp } from '../src/app';
+import { DEFAULT_BODY_LIMIT, PUBLIC_ROUTES, ROUTE_BODY_LIMITS, createApp } from '../src/createApp';
 import { ConfigError } from '../src/config';
 import { CODE_TTL_MS } from '../src/codes';
 import { sha256Hex } from '../src/crypto';
@@ -720,6 +720,8 @@ describe('hygiene', () => {
       const res = await app.request(`https://margin.test${p}`);
       expect(res.status).toBe(500);
       expect(await res.text()).toBe('{"error":"server_error"}');
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
     }
     expect(logs[0]).toContain('config.error');
   });

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-import { createApp, type Logger } from '../src/app';
+import { createApp, type Logger } from '../src/createApp';
 import type { Config } from '../src/config';
 import { MemoryStore } from '../src/store';
 
