@@ -164,6 +164,34 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(h.github.calls).toHaveLength(2); // only the two legitimate exchanges ever reached GitHub
   });
 
+  it('state is single-use on the server: a captured state cookie cannot be replayed', async () => {
+    const h = setup();
+    const a = await nativeAuthorize(h);
+    expect(a.location!.searchParams.get('code')).toBeTruthy();
+    // The attacker kept a copy of the sealed cookie from the start response and gets
+    // GitHub to issue another code for the same state; the browser jar no longer matters.
+    const captured = a.start.headers.getSetCookie()[0]!.split(';')[0]!;
+    const { code } = h.github.approve(a.start.headers.get('Location')!, OWNER);
+    const replay = await h.req(`/api/auth/github/callback?code=${code}&state=${a.githubState}`, { headers: { Cookie: captured } });
+    expect(replay.status).toBe(400);
+    expect(replay.headers.get('Location')).toBeNull();
+    expect(h.github.calls).toHaveLength(2); // the replay never reached GitHub's token endpoint
+  });
+
+  it('concurrent callbacks with the same state: exactly one proceeds', async () => {
+    const h = setup();
+    const jar = new Jar();
+    const start = await h.req(
+      `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`,
+    );
+    jar.absorb(start);
+    const approvals = [0, 1, 2].map(() => h.github.approve(start.headers.get('Location')!, OWNER));
+    const results = await Promise.all(
+      approvals.map(({ code, state }) => h.req(`/api/auth/github/callback?code=${code}&state=${state}`, { headers: { Cookie: jar.header() } })),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([302, 400, 400]);
+  });
+
   it('rejects an expired pending sign-in', async () => {
     let t = Date.now();
     const h = setup({ now: () => t });
@@ -184,7 +212,8 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(a.location!.searchParams.get('error')).toBe('access_denied');
     expect(a.location!.searchParams.get('code')).toBeNull();
     expect(a.location!.searchParams.get('state')).toBe(a.appState);
-    expect(await h.store.list('auth/')).toEqual([]);
+    expect(await h.store.list('auth/devices/')).toEqual([]);
+    expect(await h.store.list('auth/codes/')).toEqual([]);
   });
 
   it('refuses a recycled username (allowlisted login, different GitHub id)', async () => {

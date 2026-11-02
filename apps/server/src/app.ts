@@ -5,6 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { HTTPException } from 'hono/http-exception';
 
 import { CodeRepository } from './codes';
+import { NonceRepository } from './nonces';
 import { ConfigError, isAllowed, type Config } from './config';
 import { PKCE_CHALLENGE, PKCE_VERIFIER, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto';
 import { DeviceRepository, TOKEN_TTL_MS, toDeviceInfo, type DeviceRecord, type Identity } from './devices';
@@ -81,6 +82,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   const log: Logger = deps.log ?? ((event, fields) => console.log(JSON.stringify({ event, ...fields })));
   const devices = new DeviceRepository(deps.store, now);
   const codes = new CodeRepository(deps.store, now);
+  const states = new NonceRepository(deps.store, 'auth/states/', undefined, now);
 
   let config: Config | undefined;
   let sealer: Sealer | undefined;
@@ -167,9 +169,11 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   // --- Sign-in (public).
 
-  const startGitHub = (c: Context, pending: Omit<PendingSignIn, 's' | 'v' | 'exp'>) => {
+  const startGitHub = async (c: Context, pending: Omit<PendingSignIn, 's' | 'v' | 'exp'>) => {
     const cfg = getConfig();
     const s = randomToken(32);
+    // Single-use server-side too (burned at the callback), not only via the cookie.
+    await states.issue(s, OAUTH_COOKIE_TTL_S * 1000);
     const v = randomToken(48);
     const sealed = sealer!.seal({ ...pending, s, v, exp: now() + OAUTH_COOKIE_TTL_S * 1000 } satisfies PendingSignIn);
     setCookie(c, cookieNames().oauth, sealed, { ...cookieBase(), maxAge: OAUTH_COOKIE_TTL_S });
@@ -202,7 +206,13 @@ export function createApp(deps: AppDeps): Hono<Env> {
     deleteCookie(c, names.oauth, cookieBase());
     const pending = raw ? (sealer!.unseal(raw) as PendingSignIn | null) : null;
     const state = c.req.query('state') ?? '';
-    if (!pending || typeof pending.s !== 'string' || pending.exp <= now() || !safeEqual(pending.s, state)) {
+    if (
+      !pending ||
+      typeof pending.s !== 'string' ||
+      pending.exp <= now() ||
+      !safeEqual(pending.s, state) ||
+      !(await states.burn(pending.s))
+    ) {
       log('signin.bad_state');
       return page(c, 400, 'Sign-in expired', 'This sign-in link has expired or was already used. Start again from the app.');
     }
@@ -239,10 +249,12 @@ export function createApp(deps: AppDeps): Hono<Env> {
       const oneTime = await codes.issue(identity, pending.cc!, pending.ru!);
       log('signin.code_issued', { githubId: identity.githubId });
       await codes.sweep().catch(() => undefined);
+      await states.sweep().catch(() => undefined);
       return backToApp({ code: oneTime });
     }
     const ua = c.req.header('User-Agent') ?? '';
     const browser = /Firefox\//.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+    await states.sweep().catch(() => undefined);
     const { token } = await devices.create(identity, `Web (${browser})`, 'web');
     setCookie(c, names.session, token, { ...cookieBase(), maxAge: Math.floor(TOKEN_TTL_MS / 1000) });
     log('signin.web_session', { githubId: identity.githubId });
