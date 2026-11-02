@@ -12,14 +12,14 @@ The server is a confidential client of GitHub and a public authorization server 
 
 ### Flow (both platforms)
 1. The app makes a PKCE `code_verifier` (256-bit), its S256 `code_challenge` and a random `state`. It opens the system browser at
-   `GET {server}/api/auth/native/start?redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…`.
-2. The server validates `redirect_uri` against the allowlist below, stores the request in the sealed state cookie (ADR 0010) and runs the GitHub sign-in.
+   `GET {server}/api/auth/native/start?redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…&device_name=…`.
+2. The server validates `redirect_uri` against the allowlist below and shows **"Sign in a new device '<name>'?"**. Continue (a CSRF-protected same-origin POST; ADR 0010 amendments) stores the request in the sealed state cookie and runs the GitHub sign-in.
 3. On success it redirects to `redirect_uri?code=<one-time>&state=<app's state>`. The code is 256-bit, lives 60 s, is stored only as SHA-256, and is bound to `redirect_uri` and `code_challenge`. On failure it redirects there with `error=access_denied|server_error` (the app stops waiting). If `state` or the cookie is bad, it shows a 400 page and does not redirect.
 4. The app checks `state` and POSTs `{ code, code_verifier, redirect_uri, device_name }` to `/api/auth/native/token`. The code is **single-use even under concurrent redemption** (ADR 0012), and any attempt burns it, including one with a wrong verifier. A wrong verifier, wrong redirect, an expired or reused code, or a now-disallowed user all get `400 invalid_grant`.
 
 ### Allowed redirect URIs (exact regexes, no URL normalisation)
 - `http://127.0.0.1:<1024–65535>/callback` and `http://[::1]:<port>/callback`: the desktop loopback. `localhost` is refused (RFC 8252 §8.3: it may not resolve to loopback). So are anything with a query, fragment, credentials, other path, or https.
-- `margin://auth/callback` exactly: iOS (M6).
+- `margin://auth/callback` exactly: iOS. **Disabled until M6** (`CUSTOM_SCHEME_ENABLED = false` in `apps/server/src/redirects.ts`): no Margin app claims the scheme on macOS yet, so any app that registered it could receive the code. The iOS app re-enables it.
 
 ### Desktop: loopback, not a custom scheme
 `apps/desktop/src/account.ts` listens on `127.0.0.1:0` (an OS-chosen port) only for the duration of one sign-in. It answers only `GET /callback` with the exact `state`, and ignores and answers anything else, so a local process can't cut the sign-in short. It then closes.

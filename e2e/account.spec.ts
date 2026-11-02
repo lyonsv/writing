@@ -62,7 +62,8 @@ test('desktop sign-in round trip, device list and revoke, token never in the ren
     // The "browser": server → GitHub (approves) → server callback → the app's loopback listener.
     const result = await browse(startUrl!);
     expect(result.visited.map((u) => new URL(u).origin)).toEqual([
-      server.url,
+      server.url, // "Sign in a new device?" page
+      server.url, // Continue (POST) → GitHub
       github.url,
       server.url,
       new URL(start.searchParams.get('redirect_uri')!).origin,

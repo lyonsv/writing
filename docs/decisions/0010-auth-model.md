@@ -31,7 +31,8 @@ M5 will put the owner's documents on a server. No route may be exposed without a
 
     | Method and path | Purpose |
     |---|---|
-    | `GET /api/auth/native/start` | Native sign-in start |
+    | `GET /api/auth/native/start` | Native sign-in start ("Sign in a new device?" page) |
+    | `POST /api/auth/native/start` | Confirming that page (CSRF-protected) |
     | `GET /api/auth/web/start` | Web sign-in start |
     | `GET /api/auth/github/callback` | GitHub callback |
     | `POST /api/auth/native/token` | Code exchange |
@@ -45,7 +46,8 @@ M5 will put the owner's documents on a server. No route may be exposed without a
 
 | Route | Auth | Purpose |
 |---|---|---|
-| `GET /api/auth/native/start` | public | RFC 8252 start (ADR 0011) |
+| `GET /api/auth/native/start` | public | RFC 8252 start (ADR 0011): shows the confirmation page |
+| `POST /api/auth/native/start` | public | Confirm (or cancel) and go to GitHub |
 | `GET /api/auth/web/start?return_to=/path` | public | Hosted-web sign-in start |
 | `GET /api/auth/github/callback` | public | GitHub callback |
 | `POST /api/auth/native/token` | public | One-time code + PKCE verifier → device token |
@@ -97,3 +99,4 @@ M5 will put the owner's documents on a server. No route may be exposed without a
 ## Amendments (2026-11-02, after the M4 security review of 34c08ae)
 - **Open redirect fixed.** As first written, `safeReturnPath` validated the raw `return_to` but returned the URL-normalised pathname, so `/..//evil.com` (also `/.%2E//evil.com` and `/%2e%2e//evil.com`) produced `Location: //evil.com`. The claim above that this couldn't happen was wrong. It now refuses dot segments, encoded dots, slashes and backslashes, and `//`, and requires that the emitted value equals the input and is a same-origin path. Tests cover the reported payloads, plus a 18⁴-case corpus asserting the output is always a same-origin path that browsers won't re-normalise.
 - **State replay closed.** Deleting the cookie only made `state` single-use in the browser that deleted it; a captured sealed cookie could be replayed for its 10-minute life. `NonceRepository` (`src/nonces.ts`) now burns the state server-side at the callback (mark-used with `ifMatch`, as for codes). Expired nonces are swept at successful callbacks. Each `start` costs one Blob write, and `start` is rate-limited per instance.
+- **Native start asks first.** `GET /api/auth/native/start` no longer redirects straight to GitHub (which skips its consent screen for an app you've already authorised, so a crafted link could sign in a device silently). It shows "Sign in a new device '<name>'?" (name HTML-escaped). The validated request waits in a sealed `margin_confirm` cookie; **Continue** POSTs back with a CSRF token that must match the cookie, and the POST must carry `Origin` = `PUBLIC_URL`. **Cancel** returns `error=access_denied` to the app. The confirmed name is stored with the one-time code and becomes the device's name. `POST /api/auth/native/start` joins `PUBLIC_ROUTES`. The custom scheme is disabled until M6 (ADR 0011).

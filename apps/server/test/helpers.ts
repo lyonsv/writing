@@ -126,25 +126,47 @@ export type Harness = ReturnType<typeof setup>;
 
 export const LOOPBACK = 'http://127.0.0.1:53682/callback';
 
+/**
+ * GET native/start (the confirmation page), then POST its form the way a
+ * browser would (cookies, same-origin Origin, the CSRF field). Returns the
+ * POST response (302 to GitHub on success). Cookies are absorbed into `jar`.
+ */
+export async function nativeStart(h: Harness, jar: Jar, url: string, decision: 'continue' | 'cancel' = 'continue') {
+  const page = await h.req(url);
+  jar.absorb(page);
+  if (page.status !== 200) return page;
+  const html = await page.text();
+  const csrf = /name="csrf" value="([^"]+)"/.exec(html)?.[1] ?? '';
+  const res = await h.req('/api/auth/native/start', {
+    method: 'POST',
+    headers: { Cookie: jar.header(), Origin: 'https://margin.test', 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrf, decision }).toString(),
+  });
+  jar.absorb(res);
+  return res;
+}
+
 /** Drives the native flow up to the app's redirect. Returns the redirect target. */
 export async function nativeAuthorize(
   h: Harness,
   user: GitHubUser = OWNER,
-  opts: { redirectUri?: string; verifier?: string; appState?: string } = {},
+  opts: { redirectUri?: string; verifier?: string; appState?: string; deviceName?: string } = {},
 ) {
   const verifier = opts.verifier ?? newVerifier();
   const appState = opts.appState ?? b64url(randomBytes(16));
   const redirectUri = opts.redirectUri ?? LOOPBACK;
   const jar = new Jar();
-  const start = await h.req(
+  const start = await nativeStart(
+    h,
+    jar,
     `/api/auth/native/start?${new URLSearchParams({
       redirect_uri: redirectUri,
       code_challenge: s256(verifier),
       code_challenge_method: 'S256',
       state: appState,
+      device_name: opts.deviceName ?? 'Test device',
     })}`,
   );
-  jar.absorb(start);
   if (start.status !== 302) return { start, jar, verifier, appState, redirectUri };
   const { code, state } = h.github.approve(start.headers.get('Location')!, user);
   const callback = await h.req(`/api/auth/github/callback?${new URLSearchParams({ code, state })}`, {
@@ -165,7 +187,7 @@ export async function exchange(h: Harness, body: Record<string, unknown>) {
 
 /** Full native sign-in; returns the device token. */
 export async function signIn(h: Harness, deviceName = 'Test Mac'): Promise<{ token: string; deviceId: string }> {
-  const a = await nativeAuthorize(h);
+  const a = await nativeAuthorize(h, OWNER, { deviceName });
   const res = await exchange(h, {
     code: a.location!.searchParams.get('code'),
     code_verifier: a.verifier,

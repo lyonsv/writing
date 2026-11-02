@@ -41,6 +41,7 @@ Nothing server-side ships without this. ADRs 0010 (model), 0011 (native redirect
 - [ ] iOS app sharing UI + core packages; develop with Expo Go / dev build
 - [ ] Shared CodeMirror DOM editor + focus mode on iOS
 - [ ] Local store (`expo-file-system`) + sync + sign-in on iOS
+- [ ] Re-enable the `margin://auth/callback` redirect on the server (`CUSTOM_SCHEME_ENABLED` in `apps/server/src/redirects.ts`, disabled in M4 because nothing claims the scheme yet) when the iOS app registers it
 
 ## M7 — Polished product
 - [ ] Logo / wordmark (original design, SVG source in `assets/brand/`)

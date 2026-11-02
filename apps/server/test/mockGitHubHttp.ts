@@ -109,17 +109,26 @@ export async function startTestServer(github: { url: string }, allowed: GitHubUs
  */
 export async function browse(
   startUrl: string,
-  opts: { stopAt?: string; maxHops?: number } = {},
+  opts: { stopAt?: string; maxHops?: number; decision?: 'continue' | 'cancel' } = {},
 ): Promise<{ visited: string[]; status: number; text: string; stoppedAt?: string }> {
   const maxHops = opts.maxHops ?? 10;
   const jar = new Map<string, string>();
   const visited: string[] = [];
   let url = startUrl;
+  let form: { csrf: string } | null = null;
   for (let i = 0; i < maxHops; i++) {
     visited.push(url);
     const origin = new URL(url).origin;
     const cookie = jar.get(origin);
-    const res = await fetch(url, { redirect: 'manual', headers: cookie ? { Cookie: cookie } : {} });
+    const res = form
+      ? await fetch(url, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { ...(cookie ? { Cookie: cookie } : {}), Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ csrf: form.csrf, decision: opts.decision ?? 'continue' }).toString(),
+        })
+      : await fetch(url, { redirect: 'manual', headers: cookie ? { Cookie: cookie } : {} });
+    form = null;
     for (const line of res.headers.getSetCookie()) {
       const pair = line.split(';')[0]!;
       const existing = new Map((jar.get(origin) ?? '').split('; ').filter(Boolean).map((p) => [p.split('=')[0]!, p] as const));
@@ -132,7 +141,15 @@ export async function browse(
       if (opts.stopAt && url.startsWith(opts.stopAt)) return { visited, status: res.status, text: '', stoppedAt: url };
       continue;
     }
-    return { visited, status: res.status, text: await res.text() };
+    const text = await res.text();
+    // The server's "Sign in a new device?" page: press the button, like the user would.
+    const confirm = /<form id="margin-confirm"[^>]*action="([^"]+)"[\s\S]*?name="csrf" value="([^"]+)"/.exec(text);
+    if (res.status === 200 && confirm) {
+      form = { csrf: confirm[2]! };
+      url = new URL(confirm[1]!, url).toString();
+      continue;
+    }
+    return { visited, status: res.status, text };
   }
   throw new Error('too many redirects');
 }

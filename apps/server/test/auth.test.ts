@@ -14,6 +14,7 @@ import {
   bearer,
   exchange,
   nativeAuthorize,
+  nativeStart,
   newVerifier,
   s256,
   setup,
@@ -25,14 +26,15 @@ const DAY = 24 * 60 * 60 * 1000;
 describe('native sign-in (RFC 8252 + PKCE)', () => {
   it('happy path: issues a device token and /api/me works', async () => {
     const h = setup();
-    const a = await nativeAuthorize(h);
+    const a = await nativeAuthorize(h, OWNER, { deviceName: 'Vincent’s MacBook' });
     expect(a.callback!.status).toBe(302);
     expect(a.location!.origin + a.location!.pathname).toBe(LOOPBACK);
     expect(a.location!.searchParams.get('state')).toBe(a.appState);
     const code = a.location!.searchParams.get('code')!;
     expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
-    const res = await exchange(h, { code, code_verifier: a.verifier, redirect_uri: LOOPBACK, device_name: 'Vincent’s MacBook' });
+    // The name confirmed on the server's page wins over what the client sends at exchange.
+    const res = await exchange(h, { code, code_verifier: a.verifier, redirect_uri: LOOPBACK, device_name: 'Something else' });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { token: string; login: string; device: { id: string; name: string; kind: string } };
     expect(body.token).toMatch(/^mgn_[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$/);
@@ -144,10 +146,7 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
 
     // A fresh start, but the callback carries a different state.
     const jar = new Jar();
-    const start = await h.req(
-      `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`,
-    );
-    jar.absorb(start);
+    const start = await nativeStart(h, jar, `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`);
     const { code } = h.github.approve(start.headers.get('Location')!, OWNER);
     const wrong = await h.req(`/api/auth/github/callback?code=${code}&state=attacker-state`, { headers: { Cookie: jar.header() } });
     expect(wrong.status).toBe(400);
@@ -170,7 +169,7 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(a.location!.searchParams.get('code')).toBeTruthy();
     // The attacker kept a copy of the sealed cookie from the start response and gets
     // GitHub to issue another code for the same state; the browser jar no longer matters.
-    const captured = a.start.headers.getSetCookie()[0]!.split(';')[0]!;
+    const captured = a.start.headers.getSetCookie().find((c) => c.startsWith('__Host-margin_oauth='))!.split(';')[0]!;
     const { code } = h.github.approve(a.start.headers.get('Location')!, OWNER);
     const replay = await h.req(`/api/auth/github/callback?code=${code}&state=${a.githubState}`, { headers: { Cookie: captured } });
     expect(replay.status).toBe(400);
@@ -181,10 +180,7 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
   it('concurrent callbacks with the same state: exactly one proceeds', async () => {
     const h = setup();
     const jar = new Jar();
-    const start = await h.req(
-      `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`,
-    );
-    jar.absorb(start);
+    const start = await nativeStart(h, jar, `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`);
     const approvals = [0, 1, 2].map(() => h.github.approve(start.headers.get('Location')!, OWNER));
     const results = await Promise.all(
       approvals.map(({ code, state }) => h.req(`/api/auth/github/callback?code=${code}&state=${state}`, { headers: { Cookie: jar.header() } })),
@@ -196,10 +192,7 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     let t = Date.now();
     const h = setup({ now: () => t });
     const jar = new Jar();
-    const start = await h.req(
-      `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`,
-    );
-    jar.absorb(start);
+    const start = await nativeStart(h, jar, `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`);
     const { code, state } = h.github.approve(start.headers.get('Location')!, OWNER);
     t += 11 * 60 * 1000;
     const res = await h.req(`/api/auth/github/callback?code=${code}&state=${state}`, { headers: { Cookie: jar.header() } });
@@ -237,10 +230,7 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
   it('sends a cancelled GitHub consent back to the app as access_denied', async () => {
     const h = setup();
     const jar = new Jar();
-    const start = await h.req(
-      `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`,
-    );
-    jar.absorb(start);
+    const start = await nativeStart(h, jar, `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`);
     const state = new URL(start.headers.get('Location')!).searchParams.get('state');
     const res = await h.req(`/api/auth/github/callback?error=access_denied&state=${state}`, { headers: { Cookie: jar.header() } });
     const loc = new URL(res.headers.get('Location')!);
@@ -251,22 +241,21 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
   it('reports GitHub being down to the app without leaking details', async () => {
     const h = setup();
     const jar = new Jar();
-    const start = await h.req(
-      `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`,
-    );
-    jar.absorb(start);
+    const start = await nativeStart(h, jar, `/api/auth/native/start?redirect_uri=${encodeURIComponent(LOOPBACK)}&code_challenge=${s256(newVerifier())}&code_challenge_method=S256&state=appstate-0123456789`);
     const { code, state } = h.github.approve(start.headers.get('Location')!, OWNER);
     h.github.down = true;
     const res = await h.req(`/api/auth/github/callback?code=${code}&state=${state}`, { headers: { Cookie: jar.header() } });
     expect(new URL(res.headers.get('Location')!).searchParams.get('error')).toBe('server_error');
   });
 
-  it('accepts the iOS custom scheme redirect', async () => {
+  it('refuses the iOS custom scheme until M6 (nothing claims margin:// on macOS yet)', async () => {
     expect(CUSTOM_SCHEME_REDIRECT).toBe(NATIVE_CUSTOM_SCHEME_REDIRECT);
     const h = setup();
-    const a = await nativeAuthorize(h, OWNER, { redirectUri: 'margin://auth/callback' });
-    expect(a.location!.protocol).toBe('margin:');
-    expect(a.location!.searchParams.get('code')).toBeTruthy();
+    const res = await h.req(
+      `/api/auth/native/start?${new URLSearchParams({ redirect_uri: 'margin://auth/callback', code_challenge: s256(newVerifier()), code_challenge_method: 'S256', state: 'appstate-0123456789' })}`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Location')).toBeNull();
   });
 
   it('sends PKCE to GitHub and keeps its own verifier server-side', async () => {
@@ -277,11 +266,62 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(authorize.searchParams.get('redirect_uri')).toBe('https://margin.test/api/auth/github/callback');
     // GitHub's challenge is ours, not the app's.
     expect(authorize.searchParams.get('code_challenge')).not.toBe(s256(a.verifier));
-    const cookie = a.start.headers.getSetCookie()[0]!;
-    expect(cookie).toMatch(/^__Host-margin_oauth=/);
+    const cookie = a.start.headers.getSetCookie().find((c) => c.startsWith('__Host-margin_oauth='))!;
+    expect(cookie).toBeTruthy();
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/Secure/);
     expect(cookie).toMatch(/SameSite=Lax/);
+  });
+});
+
+describe('native start confirmation page (CSRF-protected)', () => {
+  const url = (extra: Record<string, string> = {}) =>
+    `/api/auth/native/start?${new URLSearchParams({ redirect_uri: LOOPBACK, code_challenge: s256(newVerifier()), code_challenge_method: 'S256', state: 'appstate-0123456789', ...extra })}`;
+
+  it('asks before signing in a new device, escaping the name, without redirecting', async () => {
+    const h = setup();
+    const res = await h.req(url({ device_name: '<script>alert(1)</script> "Mac"' }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Location')).toBeNull();
+    const html = await res.text();
+    expect(html).toContain('Sign in a new device “&lt;script&gt;alert(1)&lt;/script&gt; &quot;Mac&quot;”?');
+    expect(html).not.toContain('<script>');
+    expect(res.headers.get('Content-Security-Policy')).toContain("form-action 'self'");
+    expect(h.github.calls).toEqual([]);
+  });
+
+  it('refuses a POST without the cookie, with a wrong CSRF token, or from another origin', async () => {
+    const h = setup();
+    const page = await h.req(url());
+    const jar = new Jar();
+    jar.absorb(page);
+    const csrf = /name="csrf" value="([^"]+)"/.exec(await page.text())![1]!;
+    const post = (headers: Record<string, string>, body: Record<string, string>) =>
+      h.req('/api/auth/native/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
+        body: new URLSearchParams(body).toString(),
+      });
+    const cases = [
+      post({ Origin: 'https://margin.test' }, { csrf, decision: 'continue' }), // no cookie
+      post({ Cookie: jar.header(), Origin: 'https://margin.test' }, { csrf: 'wrong', decision: 'continue' }),
+      post({ Cookie: jar.header(), Origin: 'https://evil.example' }, { csrf, decision: 'continue' }),
+      post({ Cookie: jar.header() }, { csrf, decision: 'continue' }), // no Origin
+    ];
+    for (const res of await Promise.all(cases)) {
+      expect(res.status).toBe(400);
+      expect(res.headers.get('Location')).toBeNull();
+    }
+    expect(h.github.calls).toEqual([]);
+  });
+
+  it('Cancel sends access_denied back to the app', async () => {
+    const h = setup();
+    const res = await nativeStart(h, new Jar(), url(), 'cancel');
+    const loc = new URL(res.headers.get('Location')!);
+    expect(loc.origin + loc.pathname).toBe(LOOPBACK);
+    expect(loc.searchParams.get('error')).toBe('access_denied');
+    expect(loc.searchParams.get('state')).toBe('appstate-0123456789');
   });
 });
 
@@ -304,6 +344,7 @@ describe('open redirects', () => {
     'http://0x7f000001:8080/callback',
     'margin://auth/callback/../../evil',
     'margin://evil/callback',
+    'margin://auth/callback', // disabled until M6
     'margin://auth/callback?x=1',
     'javascript:alert(1)',
     '//evil.example/callback',

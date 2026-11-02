@@ -227,6 +227,7 @@ export class AccountManager {
         code_challenge: challenge,
         code_challenge_method: 'S256',
         state,
+        device_name: this.options.deviceName(),
       }).toString();
       await this.options.openExternal(start.toString());
       const code = await receiver.result;

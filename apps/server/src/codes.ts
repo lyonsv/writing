@@ -24,11 +24,13 @@ interface CodeRecord {
   login: string;
   challenge: string;
   redirectUri: string;
+  /** Device name the user confirmed on the server's page; becomes the device's name. */
+  deviceName?: string;
   expiresAt: number;
   usedAt?: number;
 }
 
-export type RedeemResult = { ok: true; identity: Identity } | { ok: false };
+export type RedeemResult = { ok: true; identity: Identity; deviceName?: string } | { ok: false };
 
 export class CodeRepository {
   constructor(
@@ -36,7 +38,7 @@ export class CodeRepository {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async issue(identity: Identity, challenge: string, redirectUri: string): Promise<string> {
+  async issue(identity: Identity, challenge: string, redirectUri: string, deviceName?: string): Promise<string> {
     const code = randomToken(32);
     const record: CodeRecord = {
       v: 1,
@@ -44,6 +46,7 @@ export class CodeRepository {
       login: identity.login,
       challenge,
       redirectUri,
+      ...(deviceName ? { deviceName } : {}),
       expiresAt: this.now() + CODE_TTL_MS,
     };
     await this.store.put(`${PREFIX}${sha256Hex(code)}.json`, JSON.stringify(record), { create: true });
@@ -74,7 +77,9 @@ export class CodeRepository {
       record.expiresAt > t &&
       safeEqual(record.redirectUri, redirectUri) &&
       safeEqual(record.challenge, pkceChallenge(verifier));
-    return valid ? { ok: true, identity: { githubId: record.githubId, login: record.login } } : { ok: false };
+    return valid
+      ? { ok: true, identity: { githubId: record.githubId, login: record.login }, deviceName: record.deviceName }
+      : { ok: false };
   }
 
   /** Deletes codes that expired more than a minute ago (used or not). Cheap; called opportunistically. */

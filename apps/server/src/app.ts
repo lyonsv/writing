@@ -8,7 +8,7 @@ import { CodeRepository } from './codes';
 import { NonceRepository } from './nonces';
 import { ConfigError, isAllowed, type Config } from './config';
 import { PKCE_CHALLENGE, PKCE_VERIFIER, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto';
-import { DeviceRepository, TOKEN_TTL_MS, toDeviceInfo, type DeviceRecord, type Identity } from './devices';
+import { DeviceRepository, TOKEN_TTL_MS, cleanDeviceName, toDeviceInfo, type DeviceRecord, type Identity } from './devices';
 import { GitHubError, authorizeUrl, fetchGitHubIdentity, type Fetch } from './github';
 import { RateLimiter } from './rateLimit';
 import { isAllowedNativeRedirect, safeReturnPath } from './redirects';
@@ -24,6 +24,7 @@ import type { KeyValueStore } from './store';
  */
 export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/auth/native/start',
+  'POST /api/auth/native/start',
   'GET /api/auth/web/start',
   'GET /api/auth/github/callback',
   'POST /api/auth/native/token',
@@ -57,9 +58,24 @@ interface PendingSignIn {
   ru?: string;
   cc?: string;
   cs?: string;
+  /** native: device name the user confirmed. */
+  dn?: string;
   /** web: same-origin path to land on. */
   rt?: string;
 }
+
+/** The native start request awaiting the user's confirmation (sealed cookie). */
+interface PendingConfirm {
+  ru: string;
+  cc: string;
+  cs: string;
+  dn: string;
+  csrf: string;
+  exp: number;
+}
+
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 
 function clientIp(c: Context): string {
   return c.req.header('x-real-ip') ?? c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
@@ -111,7 +127,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
 
   const cookieNames = () => {
     const prefix = getConfig().secureCookies ? '__Host-' : '';
-    return { session: `${prefix}margin_session`, oauth: `${prefix}margin_oauth` };
+    return { session: `${prefix}margin_session`, oauth: `${prefix}margin_oauth`, confirm: `${prefix}margin_confirm` };
   };
   const cookieBase = () => ({ path: '/', httpOnly: true, secure: getConfig().secureCookies, sameSite: 'Lax' as const });
 
@@ -180,7 +196,13 @@ export function createApp(deps: AppDeps): Hono<Env> {
     return c.redirect(authorizeUrl(cfg, s, pkceChallenge(v)), 302);
   };
 
-  /** RFC 8252 native start: the app opened the system browser here. */
+  /**
+   * RFC 8252 native start: the app opened the system browser here. We don't go
+   * straight to GitHub (which skips its consent screen for an app you already
+   * authorised): the user first confirms "Sign in a new device '<name>'?" on our
+   * own page. The validated request waits in a sealed cookie; the form carries a
+   * CSRF token that must match it, and the POST must come from our own origin.
+   */
   app.get('/api/auth/native/start', limited('start'), (c) => {
     const q = c.req.query();
     const ru = q.redirect_uri ?? '';
@@ -190,7 +212,56 @@ export function createApp(deps: AppDeps): Hono<Env> {
       log('signin.bad_start');
       return page(c, 400, 'Invalid sign-in request', 'Start signing in again from the Margin app.');
     }
-    return startGitHub(c, { flow: 'native', ru, cc, cs });
+    const dn = cleanDeviceName(q.device_name);
+    const csrf = randomToken(24);
+    const sealed = sealer!.seal({ ru, cc, cs, dn, csrf, exp: now() + OAUTH_COOKIE_TTL_S * 1000 } satisfies PendingConfirm);
+    setCookie(c, cookieNames().confirm, sealed, { ...cookieBase(), maxAge: OAUTH_COOKIE_TTL_S });
+    c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+    const name = escapeHtml(dn);
+    return c.html(
+      `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Sign in a new device?</title>` +
+        `<body style="font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem">` +
+        `<h1 style="font-size:1.2rem">Sign in a new device “${name}”?</h1>` +
+        `<p>Margin on this device will be able to read and change your synced documents. Only continue if you just chose Sign In in Margin.</p>` +
+        `<form id="margin-confirm" method="post" action="/api/auth/native/start">` +
+        `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
+        `<button type="submit" name="decision" value="continue">Continue to GitHub</button> ` +
+        `<button type="submit" name="decision" value="cancel">Cancel</button></form></body>`,
+      200,
+    );
+  });
+
+  app.post('/api/auth/native/start', limited('start'), async (c) => {
+    const cfg = getConfig();
+    const names = cookieNames();
+    const raw = getCookie(c, names.confirm);
+    deleteCookie(c, names.confirm, cookieBase());
+    const pending = raw ? (sealer!.unseal(raw) as PendingConfirm | null) : null;
+    let form: Record<string, unknown> = {};
+    try {
+      form = (await c.req.parseBody()) as Record<string, unknown>;
+    } catch {
+      /* treated as missing below */
+    }
+    const csrf = typeof form.csrf === 'string' ? form.csrf : '';
+    if (
+      !pending ||
+      typeof pending.csrf !== 'string' ||
+      pending.exp <= now() ||
+      c.req.header('Origin') !== cfg.publicUrl.origin ||
+      !safeEqual(pending.csrf, csrf) ||
+      !isAllowedNativeRedirect(pending.ru)
+    ) {
+      log('signin.bad_confirm');
+      return page(c, 400, 'Sign-in expired', 'This sign-in page has expired or was already used. Start again from the app.');
+    }
+    if (form.decision !== 'continue') {
+      const back = new URL(pending.ru);
+      back.searchParams.set('error', 'access_denied');
+      back.searchParams.set('state', pending.cs);
+      return c.redirect(back.toString(), 302);
+    }
+    return startGitHub(c, { flow: 'native', ru: pending.ru, cc: pending.cc, cs: pending.cs, dn: pending.dn });
   });
 
   /** Hosted web build: cookie session (ADR 0010). */
@@ -246,7 +317,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
     }
 
     if (pending.flow === 'native') {
-      const oneTime = await codes.issue(identity, pending.cc!, pending.ru!);
+      const oneTime = await codes.issue(identity, pending.cc!, pending.ru!, pending.dn);
       log('signin.code_issued', { githubId: identity.githubId });
       await codes.sweep().catch(() => undefined);
       await states.sweep().catch(() => undefined);
@@ -279,7 +350,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
       log('token.invalid_grant');
       return c.json({ error: 'invalid_grant' }, 400);
     }
-    const { token, record } = await devices.create(result.identity, typeof name === 'string' ? name : '', 'native');
+    // The name the user confirmed on our page wins over whatever the client sends now.
+    const { token, record } = await devices.create(result.identity, result.deviceName ?? (typeof name === 'string' ? name : ''), 'native');
     log('token.issued', { githubId: record.githubId });
     return c.json({ token, login: record.login, device: toDeviceInfo(record, record.id) } satisfies NativeTokenResponse);
   });
