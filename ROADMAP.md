@@ -51,24 +51,28 @@ ADRs 0015 (storage, Recently Deleted), 0016 (editor, keyboard, navigation), 0017
 - [ ] Owner: run `docs/ios-testing.md` on an iPhone with Expo Go (keyboard, font, typing latency, sign-in callback, flush on background)
 
 ## M7 — Polished product
-- [ ] Logo / wordmark (original design, SVG source in `assets/brand/`)
-- [ ] App icons: macOS `.icns` (electron-builder), iOS icon + splash (Expo `app.json`), favicon for web
-- [ ] Consistent visual polish pass: spacing, typography, empty states, onboarding (first-run picks documents folder)
-- [ ] README for anyone: what it is, screenshots/GIF, prerequisites, clone → install → run desktop / iOS (Expo Go) / server locally, env vars, deploy-your-own-server guide, troubleshooting
-- [ ] LICENSE (MIT) + font licence notice (IBM Plex Mono, OFL)
-- [ ] Signed/notarized macOS release build (optional; needs Apple Developer account)
-
-> Earlier milestones keep README's setup section accurate as they land; M7 is the final consolidation and polish.
+ADR 0018 (brand). Generated assets: `pnpm brand:build` / `brand:check`, `pnpm notices`, `pnpm docs:screenshots`.
+- [x] Logo / wordmark (original design, SVG source in `assets/brand/`: light, dark, mono)
+- [x] App icons: macOS `.icns` (electron-builder `mac.icon`, checked by `verify:packaged`), iOS icon light/dark/tinted + splash (`app.json`), favicon + apple-touch-icon for web
+- [x] Visual polish: shared UI tokens (spacing, type, radii) for sidebar, quick open, account and the iOS screens; empty library state; signed-out state copy
+- [x] First run: a welcome document (shortcuts, focus mode) written into an empty library once, never re-created; folder choice stays in File › Choose Documents Folder… (ADR 0008)
+- [x] About: macOS About panel (version, licence, font credit) + Help › Licences; iOS Settings › About
+- [x] README for anyone: what it is, screenshots, features and shortcuts, prerequisites, run desktop / iOS (Expo Go) / server, deploy your own server, architecture, troubleshooting (checked from a fresh clone)
+- [x] LICENSE (MIT) + THIRD_PARTY_NOTICES.md (IBM Plex Mono OFL in full; generated from production dependencies), bundled in the app
+- [ ] ~~Signed/notarized macOS release build~~: **not planned** (ADR 0019; needs a paid Apple account). Unsigned builds open with right-click → Open the first time.
 
 ## M8 — Production deployment (daily use)
-Goal: Margin installed and authenticated on the owner's Mac and iPhone, with a real home-screen icon.
-- [ ] Server: Vercel production deploy, env vars (OAuth secrets, allowlist, Blob token) set in Vercel only; optional custom domain
-- [ ] macOS: packaged `.app` installed in `/Applications`; releases published to GitHub Releases; auto-update via `electron-updater` (requires signing — see below)
-- [ ] iOS: **EAS Build → TestFlight** (recommended; needs Apple Developer Program, $99/yr) for a real app with home-screen icon; **EAS Update** for over-the-air JS updates without rebuilding
-- [ ] Fallback if no Apple Developer account: install the hosted web build as a home-screen PWA (icon on phone, sign-in required, works via Safari)
-- [ ] Hosted web build behind sign-in: serve the static export only through `requireAuth` (cookie session from M4) and add a browser sign-in screen (ADR 0010)
-- [ ] Confirm on first deploy: GitHub accepts PKCE for the OAuth App; Vercel detects the Hono entry in `apps/server`; Blob conditional writes behave as ADRs 0012/0013 assume (manifest CAS)
+Goal: Margin on the owner's Mac (packaged app) and iPhone (**installable web app**, ADR 0019), signed in and syncing, at no cost.
+- [x] Server: Vercel production deploy (orchestrator), env vars set in Vercel only
+- [ ] Hosting: serve the Expo web export from the same project/origin as the API (`https://margin-sync.vercel.app/`, API under `/api`); HTML shell behind sign-in with a minimal sign-in page (web OAuth flow); hashed static assets public; update `vercel.json` and ADR 0014
+- [ ] Web DocumentStore: IndexedDB or OPFS (research iOS Safari) with native semantics: atomic per-document writes, per-path queue, no-overwrite create/rename, Recently Deleted, conflict copies, core path rules; `navigator.storage.persist()`; migrate localStorage documents; Electron keeps real files (runtime choice)
+- [ ] Web sync: core engine in the browser over the cookie session; CSRF + Origin checks on every state-changing route; sync on visibility change, timer, after edits, pull-to-refresh; flush on `pagehide` / `visibilitychange`
+- [ ] PWA: `manifest.webmanifest` (standalone, theme colours, M7 icons), apple-touch-icon, `apple-mobile-web-app-capable` + status-bar style, service worker for an offline app shell that never caches `/api`; safe areas; `visualViewport` keyboard handling (caret visible, typewriter centred in the visible area); reuse the M6 phone screens where react-native-web allows
+- [x] Security: `margin://auth/callback` removed from the production allowlist (dev-only flag; ADR 0017 amendments)
+- [ ] Tests: Playwright WebKit + iPhone profile against a local server: sign-in (mock GitHub), offline edit → reconnect → sync, convergence with desktop, storage semantics, service worker never caches API responses or stale HTML after sign-out; `docs/ios-testing.md` → "Install on iPhone" guide
+- [ ] macOS: packaged `.app` in `/Applications`, releases on GitHub Releases (unsigned; manual updates, no `electron-updater` without signing)
+- [ ] Confirm on first deploy: GitHub accepts PKCE for the OAuth App; Blob conditional writes behave as ADRs 0012/0013 assume (manifest CAS)
 - [ ] Sync maintenance: garbage-collect unreferenced `sync/objects/*` (ADR 0013); backup = export manifest paths → objects
-- [ ] Not planned: public App Store listing (review overhead isn't needed for personal use; can be added later from the same EAS pipeline)
 - [ ] Verify end-to-end: write on Mac → appears on iPhone and vice versa; revoked device loses access
 - [ ] Backups: periodic export of the Blob store (e.g. scheduled GitHub Action or Vercel cron to a private archive)
+- Not planned: EAS Build / TestFlight / App Store and signed or notarised macOS builds (ADR 0019). The M6 native app remains a development target (Expo Go).

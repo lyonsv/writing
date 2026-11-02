@@ -19,7 +19,8 @@
     "brand:build": "node scripts/brand/build.mjs",
     "brand:check": "node scripts/brand/build.mjs --check",
     "notices": "node scripts/notices.mjs",
-    "notices:check": "node scripts/notices.mjs --check"
+    "notices:check": "node scripts/notices.mjs --check",
+    "docs:screenshots": "node scripts/readme-screenshots.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
