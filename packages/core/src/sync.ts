@@ -371,3 +371,12 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   }
   return report;
 }
+
+/** What the desktop shows about sync (renderer-safe; no paths of other devices, no tokens). */
+export interface SyncStatus {
+  /** off: signed out. idle: last run finished cleanly. */
+  state: 'off' | 'idle' | 'syncing' | 'offline' | 'error';
+  lastSyncedAt?: string;
+  /** Short human text for errors and skipped documents. */
+  message?: string;
+}

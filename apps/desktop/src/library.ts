@@ -64,7 +64,7 @@ async function lstatOrNull(p: string): Promise<Stats | null> {
   }
 }
 
-const hashOf = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
+const hashOf = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex');
 
 // ignoreBOM: keep a leading U+FEFF in the text so it is written back unchanged.
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -103,7 +103,7 @@ export function tempPathFor(target: string): string {
   return path.join(path.dirname(target), `.margin-${randomBytes(6).toString('hex')}.tmp`);
 }
 
-async function writeTemp(target: string, content: string): Promise<string> {
+async function writeTemp(target: string, content: string | Uint8Array): Promise<string> {
   const tmp = tempPathFor(target);
   const handle = await fs.open(tmp, 'wx', 0o644);
   try {
@@ -325,7 +325,12 @@ export class FileSystemLibrary implements DocumentStore {
     });
   }
 
-  async rename(from: string, to: string): Promise<void> {
+  /**
+   * Rename/move. Never replaces an existing destination. With `expectHash`
+   * (sync), the source file must still have that content hash, checked under
+   * the path locks, or it throws `DocumentStoreError('changed')`.
+   */
+  async rename(from: string, to: string, options: { expectHash?: string } = {}): Promise<void> {
     const srcKey = this.key(from);
     const dstKey = this.key(to);
     const src = await this.resolve(srcKey);
@@ -345,6 +350,10 @@ export class FileSystemLibrary implements DocumentStore {
       this.queue.run(second, async () => {
         if (stat.isDirectory()) this.assertFolderPath(dstKey);
         else this.assertDocumentPath(dstKey);
+        if (options.expectHash !== undefined) {
+          const current = stat.isFile() ? await this.currentVersion(src) : null;
+          if (current?.hash !== options.expectHash) throw new DocumentStoreError('changed', `${from} changed`);
+        }
         const existing = await lstatOrNull(dst);
         if (existing && existing.dev === stat.dev && existing.ino === stat.ino) {
           // Case-only rename on a case-insensitive volume (`a.md` → `A.md`): `dst` *is* `src`.
@@ -589,6 +598,101 @@ export class FileSystemLibrary implements DocumentStore {
     }
   }
 
+  // ---------------------------------------------------------------- sync (ADR 0013)
+  //
+  // Sync goes through the same per-path queue as saves, and checks the file's
+  // current content hash right before acting, so a download can never land on
+  // text it didn't plan for. It deliberately does NOT update `known` for open
+  // documents: the watcher then reports the change like any external edit, so a
+  // clean editor reloads and a dirty one saves to a conflict copy (ADR 0006).
+
+  /** Current bytes and hash of a document, or null if it doesn't exist. */
+  async readForSync(relative: string): Promise<{ bytes: Buffer; hash: string } | null> {
+    const key = this.key(relative);
+    this.assertDocumentPath(key);
+    const file = await this.resolve(key);
+    return this.queue.run(key, async () => {
+      try {
+        const bytes = await fs.readFile(file);
+        return { bytes, hash: hashOf(bytes) };
+      } catch (error) {
+        if (code(error) === 'ENOENT' || code(error) === 'EISDIR') return null;
+        throw error;
+      }
+    });
+  }
+
+  /** Writes `bytes` only if the file's current hash is `expect` (null: only if it doesn't exist). */
+  async writeForSync(relative: string, bytes: Uint8Array, expect: string | null): Promise<boolean> {
+    const key = this.key(relative);
+    this.assertDocumentPath(key);
+    const file = await this.resolve(key);
+    return this.queue.run(key, async () => {
+      if (expect === null) {
+        try {
+          await this.createExclusive(file, bytes);
+          return true;
+        } catch (error) {
+          if (error instanceof DocumentStoreError && error.code === 'exists') return false;
+          throw error;
+        }
+      }
+      const current = await this.currentVersion(file).catch(() => null);
+      if (current?.hash !== expect) return false;
+      const tmp = await writeTemp(file, bytes);
+      try {
+        await fs.rename(tmp, file);
+      } catch (error) {
+        await fs.rm(tmp, { force: true });
+        throw error;
+      }
+      await fsyncDir(path.dirname(file));
+      return true;
+    });
+  }
+
+  /** Moves the document to the Trash only if its current hash is `expect`. */
+  async removeForSync(relative: string, expect: string, trash: (absolute: string) => Promise<void>): Promise<boolean> {
+    const key = this.key(relative);
+    this.assertDocumentPath(key);
+    const file = await this.resolve(key);
+    return this.queue.run(key, async () => {
+      const current = await this.currentVersion(file).catch(() => null);
+      if (current?.hash !== expect) return false;
+      await trash(file);
+      return true;
+    });
+  }
+
+  /** Renames only if `from` still has hash `expect` and `to` doesn't exist. */
+  async moveForSync(from: string, to: string, expect: string): Promise<boolean> {
+    try {
+      await this.rename(from, to, { expectHash: expect });
+      return true;
+    } catch (error) {
+      if (error instanceof DocumentStoreError) return false;
+      throw error;
+    }
+  }
+
+  /** Creates `bytes` at the next free conflict-copy name of `relative`; returns its path. */
+  async conflictCopyForSync(relative: string, bytes: Uint8Array): Promise<string> {
+    const key = this.key(relative);
+    const now = this.options.now?.() ?? new Date();
+    for (let attempt = 1; attempt < 1000; attempt++) {
+      const copyKey = conflictCopyPath(key, now, attempt);
+      const copyFile = await this.resolve(copyKey);
+      try {
+        await this.queue.run(copyKey, () => this.createExclusive(copyFile, bytes));
+        return copyKey;
+      } catch (error) {
+        if (error instanceof DocumentStoreError && error.code === 'exists') continue;
+        throw error;
+      }
+    }
+    throw new Error(`Could not find a free conflict-copy name for ${key}`);
+  }
+
   // ---------------------------------------------------------------- internals
 
   private async currentVersion(file: string): Promise<Version | null> {
@@ -662,7 +766,7 @@ export class FileSystemLibrary implements DocumentStore {
   }
 
   /** Atomically creates `file` with `content`; throws DocumentStoreError('exists') if it exists. */
-  private async createExclusive(file: string, content: string): Promise<void> {
+  private async createExclusive(file: string, content: string | Uint8Array): Promise<void> {
     await fs.mkdir(path.dirname(file), { recursive: true });
     const tmp = await writeTemp(file, content);
     try {

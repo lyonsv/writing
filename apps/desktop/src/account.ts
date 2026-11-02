@@ -302,14 +302,27 @@ export class AccountManager {
    * A 401 means the token was revoked or expired: we forget it and report
    * signed out.
    */
-  async request(method: string, pathname: string, body?: unknown): Promise<Response> {
+  async request(
+    method: string,
+    pathname: string,
+    init: { json?: unknown; body?: Uint8Array; headers?: Record<string, string>; timeoutMs?: number } = {},
+  ): Promise<Response> {
     const s = this.activeSession();
     if (!s) throw new AccountError('Not signed in.');
+    const headers: Record<string, string> = { ...init.headers, Authorization: `Bearer ${s.token}` };
+    let body: BodyInit | undefined;
+    if (init.json !== undefined) {
+      headers['Content-Type'] = 'application/json';
+      body = JSON.stringify(init.json);
+    } else if (init.body !== undefined) {
+      headers['Content-Type'] = 'application/octet-stream';
+      body = init.body as unknown as BodyInit;
+    }
     const res = await this.fetchImpl(new URL(pathname, s.serverUrl), {
       method,
-      headers: { Authorization: `Bearer ${s.token}`, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      headers,
+      body,
+      signal: AbortSignal.timeout(init.timeoutMs ?? 15_000),
       redirect: 'error', // never follow a redirect with the token attached
     });
     if (res.status === 401) {

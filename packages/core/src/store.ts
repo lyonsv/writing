@@ -26,7 +26,7 @@ export interface DocumentStore {
 
 export class DocumentStoreError extends Error {
   constructor(
-    readonly code: 'not-found' | 'exists' | 'invalid-path' | 'not-a-folder',
+    readonly code: 'not-found' | 'exists' | 'invalid-path' | 'not-a-folder' | 'changed',
     message: string,
   ) {
     super(message);

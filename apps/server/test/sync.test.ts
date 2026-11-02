@@ -21,7 +21,7 @@ async function client() {
     manifest: async () => (await (await h.req('/api/sync/manifest', { headers: auth })).json()) as { seq: number; entries: Array<{ path: string; rev: string; hash: string; deleted?: true }> },
     get: (p: string) => h.req(`/api/sync/file${q(p)}`, { headers: auth }),
     put: (p: string, body: string | Uint8Array, pre: Record<string, string>) =>
-      h.req(`/api/sync/file${q(p)}`, { method: 'PUT', headers: { ...auth, ...pre }, body }),
+      h.req(`/api/sync/file${q(p)}`, { method: 'PUT', headers: { ...auth, ...pre }, body: body as unknown as BodyInit }),
     del: (p: string, rev?: string) => h.req(`/api/sync/file${q(p)}`, { method: 'DELETE', headers: { ...auth, ...(rev ? { 'If-Match': `"${rev}"` } : {}) } }),
     move: (from: string, to: string, ifMatch: string) =>
       h.req('/api/sync/move', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to, ifMatch }) }),
