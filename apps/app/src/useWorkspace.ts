@@ -1,5 +1,7 @@
 import {
   SaveScheduler,
+  WELCOME_PATH,
+  WELCOME_TEXT,
   basename,
   childNames,
   detectLineEnding,
@@ -266,11 +268,17 @@ export function useWorkspace(
     if (!settingsLoaded || started.current) return;
     started.current = true;
     void serialize(async () => {
-      const list = await refresh();
+      let list = await refresh();
+      // First run ever: a welcome document, but only into an empty library, and only
+      // once (the flag is saved first, so it's never re-created, even after a crash or a delete).
+      if (!settings.welcomed) {
+        await updateSettingsRef.current({ welcomed: true });
+        if (!list.some((e) => e.kind === 'document') && (await writeWelcome())) list = await refresh();
+      }
       const target = pickInitial(list, settings.lastDocument) ?? (await createDocumentNow(''));
       await openNow(target);
     }).catch((error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)));
-  }, [settingsLoaded, settings.lastDocument, refresh, serialize, createDocumentNow, openNow]);
+  }, [settingsLoaded, settings.lastDocument, settings.welcomed, refresh, serialize, createDocumentNow, openNow]);
 
   // External edits, and the desktop close/quit flush handshake.
   useEffect(() => {
@@ -334,6 +342,19 @@ export function useWorkspace(
 }
 
 export type Workspace = ReturnType<typeof useWorkspace>;
+
+/** Creates the welcome document exclusively (never over an existing file). True if written. */
+async function writeWelcome(): Promise<boolean> {
+  try {
+    await getLibraryBackend().createDocument(WELCOME_PATH);
+  } catch {
+    return false; // already there (e.g. synced from another device) or not writable
+  }
+  const docs = getDocumentBackend();
+  await docs.open(WELCOME_PATH);
+  await docs.save(WELCOME_PATH, WELCOME_TEXT);
+  return true;
+}
 
 /** Last opened if it still exists, else the most recently modified document. */
 export function pickInitial(entries: readonly LibraryEntry[], lastDocument: string | undefined): string | null {

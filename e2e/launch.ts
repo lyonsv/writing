@@ -30,9 +30,12 @@ export async function launch(
     MARGIN_LIBRARY_DIR: libraryDir,
     MARGIN_USER_DATA_DIR: userDataDir,
     MARGIN_SHOW_INACTIVE: '1',
+    // No first-run welcome document (tests assume an untouched library); pass '' to get it.
+    MARGIN_TEST_SKIP_WELCOME: '1',
     ...extraEnv,
   } as Record<string, string>;
   delete env.MARGIN_DEV_SERVER_URL;
+  if (!env.MARGIN_TEST_SKIP_WELCOME) delete env.MARGIN_TEST_SKIP_WELCOME;
   const app = await electron.launch({
     executablePath: electronBinary,
     args: [path.join(repo, 'apps/desktop/dist/main.js')],

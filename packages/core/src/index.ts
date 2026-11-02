@@ -15,3 +15,4 @@ export * from './sync';
 export * from './serialQueue';
 export * from './bytes';
 export * from './syncHttp';
+export * from './welcome';

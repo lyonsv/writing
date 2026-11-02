@@ -754,6 +754,8 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(async () => {
   settings = new SettingsFile(path.join(app.getPath('userData'), 'settings.json'));
   await settings.load();
+  // Tests: no first-run welcome document unless a test asks for it.
+  if (process.env.MARGIN_TEST_SKIP_WELCOME && !settings.get().welcomed) await settings.update({ welcomed: true });
   settings.onChange(applySettings);
   // Account: reads the local encrypted session only; no network at startup.
   account = createAccount();

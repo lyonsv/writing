@@ -11,6 +11,8 @@ export interface Settings {
   /** Library sidebar visible (never shown in focus mode). */
   sidebar: boolean;
   librarySort: 'name' | 'modified';
+  /** The first-run welcome document was offered (written once, never re-created). */
+  welcomed?: boolean;
   /** Library-relative path of the last opened document. */
   lastDocument?: string;
   /**
@@ -44,6 +46,7 @@ export function parseSettingsPatch(input: unknown): Partial<Settings> {
   if (typeof raw.focusMode === 'boolean') out.focusMode = raw.focusMode;
   if (typeof raw.typewriter === 'boolean') out.typewriter = raw.typewriter;
   if (typeof raw.sidebar === 'boolean') out.sidebar = raw.sidebar;
+  if (typeof raw.welcomed === 'boolean') out.welcomed = raw.welcomed;
   if (raw.librarySort === 'name' || raw.librarySort === 'modified') out.librarySort = raw.librarySort;
   if (typeof raw.lastDocument === 'string' && raw.lastDocument.length < 4096) out.lastDocument = raw.lastDocument;
   if (typeof raw.libraryDir === 'string' && raw.libraryDir.length < 4096) out.libraryDir = raw.libraryDir;
