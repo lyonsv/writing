@@ -206,3 +206,48 @@ test('filesystems without hard links (exFAT, SMB): create, save and conflict cop
   expect(read(path.join(lib, copies[0]!))).toBe('theirs ours');
   expect(readdirSync(lib).filter((f) => f.endsWith('.tmp'))).toEqual([]);
 });
+
+test('a hung renderer does not block quit beyond the flush timeout', async () => {
+  const lib = newLibrary();
+  const file = path.join(lib, 'Untitled.md');
+  const app = await launch(lib);
+  const page = await app.firstWindow();
+  await page.locator('.cm-content').click();
+  await page.keyboard.type('saved before the hang');
+  await expect.poll(() => read(file)).toBe('saved before the hang');
+  await page.evaluate(() => {
+    setTimeout(() => {
+      for (;;) {
+        /* hang the renderer's main thread */
+      }
+    }, 50);
+  });
+  await sleep(200);
+  const started = Date.now();
+  await quitAndWait(app);
+  const took = Date.now() - started;
+  expect(took).toBeLessThan(12_000); // 5 s flush timeout + teardown
+  expect(read(file)).toBe('saved before the hang');
+});
+
+test('closing a window whose renderer is hung destroys it after the timeout', async () => {
+  const lib = newLibrary();
+  const app = await launch(lib);
+  const page = await app.firstWindow();
+  await expect(page.locator('.cm-content')).toBeVisible();
+  await page.evaluate(() => {
+    setTimeout(() => {
+      for (;;) {
+        /* hang */
+      }
+    }, 50);
+  });
+  await sleep(200);
+  const started = Date.now();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+  await expect
+    .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), { timeout: 12_000 })
+    .toBe(0);
+  expect(Date.now() - started).toBeLessThan(12_000);
+  await quitAndWait(app);
+});

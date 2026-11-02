@@ -28,8 +28,13 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_TEST_NO_HARDLINKS  simulate a filesystem without hard links (tests)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
-/** How long to wait for a renderer to flush before closing anyway (it may be hung). */
-const FLUSH_TIMEOUT_MS = 20_000;
+/**
+ * How long to wait for a renderer to confirm its flush. A healthy renderer
+ * answers in milliseconds (a 20 MB document in well under a second); after
+ * this it is treated as hung and its window is destroyed, since its text is
+ * unreachable anyway and a hung page would otherwise block quit indefinitely.
+ */
+const FLUSH_TIMEOUT_MS = 5_000;
 
 if (process.env.MARGIN_USER_DATA_DIR) {
   app.setPath('userData', path.resolve(process.env.MARGIN_USER_DATA_DIR));
@@ -102,6 +107,8 @@ const flushWaiters = new Map<number, () => void>();
 /**
  * Asks the window's renderer to push any unsaved editor text through `save`
  * and waits for it to confirm, then waits for the write queue to drain.
+ * A renderer that doesn't answer in time is destroyed (not closed: closing
+ * waits for its unload handlers, which a hung page never runs).
  */
 function flushWindow(win: BrowserWindow): Promise<void> {
   if (win.isDestroyed() || win.webContents.isCrashed()) return library.idle();
@@ -109,7 +116,8 @@ function flushWindow(win: BrowserWindow): Promise<void> {
   return new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
       flushWaiters.delete(id);
-      console.warn(`Margin: renderer did not confirm flush within ${FLUSH_TIMEOUT_MS}ms`);
+      console.warn(`Margin: renderer did not confirm flush within ${FLUSH_TIMEOUT_MS}ms; destroying its window`);
+      if (!win.isDestroyed()) win.destroy();
       resolve();
     }, FLUSH_TIMEOUT_MS);
     flushWaiters.set(id, () => {
