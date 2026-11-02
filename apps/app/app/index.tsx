@@ -93,6 +93,7 @@ export default function EditorScreen() {
         <Sidebar
           tree={tree}
           activePath={ws.activePath}
+          truncatedAt={ws.truncated ? ws.entries.length : undefined}
           sort={settings.librarySort}
           colors={colors}
           topInset={desktop ? 38 : 8}

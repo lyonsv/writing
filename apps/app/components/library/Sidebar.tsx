@@ -30,6 +30,8 @@ export interface SidebarProps {
   colors: SidebarColors;
   /** Extra top padding (e.g. clear of the macOS traffic lights). */
   topInset?: number;
+  /** Set when the listing was cut off (very large library): how many items are shown. */
+  truncatedAt?: number;
   /** Path to put into inline-rename mode (e.g. a just-created folder). */
   renameRequest?: string | null;
   onSort: (sort: LibrarySort) => void;
@@ -244,6 +246,12 @@ export function Sidebar(props: SidebarProps) {
           })}
         </ScrollView>
       </DropArea>
+
+      {props.truncatedAt !== undefined ? (
+        <Text testID="library-truncated" style={[styles.error, { color: colors.muted }]}>
+          Showing the first {props.truncatedAt.toLocaleString('en-US')} items
+        </Text>
+      ) : null}
 
       {error ? (
         <Text testID="library-error" style={[styles.error, { color: colors.danger }]}>

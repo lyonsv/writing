@@ -62,3 +62,12 @@ export function byteLength(text: string): number {
   }
   return bytes;
 }
+
+/** The most entries a library listing returns (deeper/larger libraries are cut off and flagged). */
+export const LIBRARY_LIST_LIMIT = 50_000;
+
+/** A recursive library listing; `truncated` when entries were left out (over the limit or too deep). */
+export interface LibraryListing {
+  entries: LibraryEntry[];
+  truncated: boolean;
+}

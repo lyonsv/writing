@@ -50,6 +50,8 @@ export function useWorkspace(
   updateSettings: (patch: Partial<Settings>) => Promise<void>,
 ) {
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
+  /** The desktop listing stops at LIBRARY_LIST_LIMIT entries (or 64 folders deep). */
+  const [truncated, setTruncated] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
@@ -71,9 +73,10 @@ export function useWorkspace(
   }, []);
 
   const refresh = useCallback(async () => {
-    const list = await getLibraryBackend().listTree();
+    const { entries: list, truncated: cut } = await getLibraryBackend().listTree();
     entriesRef.current = list;
     setEntries(list);
+    setTruncated(cut);
     return list;
   }, []);
 
@@ -309,6 +312,7 @@ export function useWorkspace(
 
   return {
     entries,
+    truncated,
     session,
     activePath,
     saveStatus,

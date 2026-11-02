@@ -41,6 +41,7 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_WEB_DIR         Expo web export folder (default: packaged resources or ../app/dist)
  *   MARGIN_SHOW_INACTIVE   show the window without taking OS focus (automated tests)
  *   MARGIN_TEST_NO_HARDLINKS  simulate a filesystem without hard links (tests)
+ *   MARGIN_TEST_LIST_LIMIT    cap the library listing at this many entries (tests)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
 /**
@@ -369,7 +370,9 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.save, (p: string, content: string) => library.save(p, content));
   handle(IPC_CHANNELS.acknowledgeExternal, (p: string, token: string) => library.acknowledgeExternal(p, token));
   handle(IPC_CHANNELS.libraryRoot, async () => library.root);
-  handle(IPC_CHANNELS.libraryTree, () => library.listTree());
+  // MARGIN_TEST_LIST_LIMIT: lower the listing cap so tests can see the truncation notice.
+  const listLimit = Number(process.env.MARGIN_TEST_LIST_LIMIT) || undefined;
+  handle(IPC_CHANNELS.libraryTree, () => library.listTree(listLimit));
   handle(IPC_CHANNELS.libraryCreateDocument, (p: string) => library.createDocument(p));
   handle(IPC_CHANNELS.libraryReveal, async (p: string) => shell.showItemInFolder(await library.resolve(p)));
   ipcMain.handle(IPC_CHANNELS.libraryContextMenu, (event, items: unknown) => {

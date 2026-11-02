@@ -1,4 +1,4 @@
-import type { LibraryEntry } from './document';
+import type { LibraryEntry, LibraryListing } from './document';
 import type { Settings } from './settings';
 
 /**
@@ -103,8 +103,8 @@ export const APP_COMMANDS: readonly AppCommand[] = ['new-document', 'new-folder'
 export type ContextMenuItem = { id: string; label: string; enabled?: boolean } | { type: 'separator' };
 
 export interface DesktopLibraryBridge {
-  /** Flat recursive listing (folders + .md documents). */
-  listTree(): Promise<LibraryEntry[]>;
+  /** Flat recursive listing (folders + .md documents), flagged if it was cut off. */
+  listTree(): Promise<LibraryListing>;
   /** Creates an empty document; rejects if anything exists at `path`. */
   createDocument(path: string): Promise<void>;
   createFolder(path: string): Promise<void>;

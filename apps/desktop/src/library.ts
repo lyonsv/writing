@@ -3,6 +3,7 @@ import { promises as fs, type Stats } from 'node:fs';
 import path from 'node:path';
 
 import {
+  LIBRARY_LIST_LIMIT,
   DocumentStoreError,
   conflictCopyPath,
   isWithin as isWithinKey,
@@ -17,6 +18,7 @@ import {
   type DocumentStore,
   type ExternalChange,
   type LibraryEntry,
+  type LibraryListing,
   type OpenedDocument,
   type SaveResult,
 } from '@margin/core';
@@ -421,10 +423,14 @@ export class FileSystemLibrary implements DocumentStore {
   }
 
   /** Recursive listing of folders and `.md` documents (dot-entries and symlinks skipped). */
-  async listTree(limit = 50_000): Promise<LibraryEntry[]> {
+  async listTree(limit = LIBRARY_LIST_LIMIT): Promise<LibraryListing> {
     const out: LibraryEntry[] = [];
+    let truncated = false;
     const walk = async (rel: string, depth: number): Promise<void> => {
-      if (depth > 64 || out.length >= limit) return;
+      if (depth > 64) {
+        truncated = true;
+        return;
+      }
       const dir = rel === '' ? this.root : path.join(this.root, ...rel.split('/'));
       let dirents;
       try {
@@ -434,8 +440,12 @@ export class FileSystemLibrary implements DocumentStore {
         throw error;
       }
       for (const d of dirents) {
-        if (out.length >= limit) return;
         if (d.name.startsWith('.') || d.isSymbolicLink()) continue;
+        if (out.length >= limit) {
+          // Only flag it if something listable was actually left out.
+          if (d.isDirectory() || (d.isFile() && isMarkdownPath(d.name))) truncated = true;
+          return;
+        }
         const childRel = joinDocPath(rel, d.name);
         if (d.isDirectory()) {
           out.push(folderEntry(childRel));
@@ -451,7 +461,7 @@ export class FileSystemLibrary implements DocumentStore {
       }
     };
     await walk('', 0);
-    return out;
+    return { entries: out, truncated };
   }
 
   /** Creates an empty document; fails with `exists` rather than touching an existing file. */

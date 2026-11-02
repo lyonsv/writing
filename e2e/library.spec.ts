@@ -371,3 +371,24 @@ test('case-only rename (a.md → A.md) works on a case-insensitive volume, inclu
   expect(readdirSync(lib).filter((f) => !f.startsWith('.')).sort()).toEqual(['A.md', 'Notes']);
   await quitAndWait(app);
 });
+
+test('a library listing cut off at the limit says so in the sidebar', async () => {
+  const lib = newLibrary();
+  for (const n of ['a', 'b', 'c', 'd', 'e']) writeFileSync(path.join(lib, `${n}.md`), n);
+  const app = await launch(lib, { MARGIN_TEST_LIST_LIMIT: '3' });
+  const page = await app.firstWindow();
+  await expect(page.locator('.cm-content')).toBeVisible();
+  await showSidebar(app, page);
+  await expect(page.getByTestId('library-truncated')).toHaveText('Showing the first 3 items');
+  await expect(page.locator('[data-testid^="library-row:"]')).toHaveCount(3);
+  await quitAndWait(app);
+
+  // Under the limit: no notice.
+  const app2 = await launch(lib, { MARGIN_TEST_LIST_LIMIT: '10' });
+  const page2 = await app2.firstWindow();
+  await expect(page2.locator('.cm-content')).toBeVisible();
+  await showSidebar(app2, page2);
+  await expect(page2.locator('[data-testid^="library-row:"]')).toHaveCount(5);
+  await expect(page2.getByTestId('library-truncated')).toHaveCount(0);
+  await quitAndWait(app2);
+});

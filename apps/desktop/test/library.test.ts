@@ -232,7 +232,8 @@ describe('FileSystemLibrary tree operations', () => {
     writeFileSync(path.join(root, 'notes', 'image.png'), '');
     writeFileSync(path.join(root, '.hidden.md'), '');
     symlinkSync(base, path.join(root, 'link'));
-    const entries = await lib.listTree();
+    const { entries, truncated } = await lib.listTree();
+    expect(truncated).toBe(false);
     expect(entries.map((e) => `${e.kind}:${e.path}`).sort()).toEqual([
       'document:a.md',
       'document:notes/deep/b.md',
@@ -240,6 +241,23 @@ describe('FileSystemLibrary tree operations', () => {
       'folder:notes/deep',
     ]);
     expect(entries.find((e) => e.path === 'notes/deep/b.md')).toMatchObject({ size: 2 });
+  });
+
+  it('flags a listing cut off at the limit, but not one that fits exactly', async () => {
+    for (const n of ['a', 'b', 'c', 'd', 'e']) writeFileSync(path.join(root, `${n}.md`), n);
+    writeFileSync(path.join(root, 'z.txt'), ''); // not listable: doesn't count
+    expect(await lib.listTree(5)).toMatchObject({ truncated: false });
+    const cut = await lib.listTree(3);
+    expect(cut.truncated).toBe(true);
+    expect(cut.entries).toHaveLength(3);
+  });
+
+  it('flags folders nested deeper than 64 levels', async () => {
+    const deep = Array.from({ length: 66 }, (_, i) => `d${i}`).join('/');
+    await lib.write(`${deep}/x.md`, 'x');
+    const { entries, truncated } = await lib.listTree();
+    expect(truncated).toBe(true);
+    expect(entries.some((e) => e.path.endsWith('x.md'))).toBe(false);
   });
 
   it('creates documents exclusively', async () => {

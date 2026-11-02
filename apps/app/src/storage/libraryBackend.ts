@@ -5,12 +5,12 @@ import {
   type ContextMenuItem,
   type DesktopBridge,
   type DocumentStore,
-  type LibraryEntry,
+  type LibraryListing,
 } from '@margin/core';
 
 /** Library operations the UI needs; implemented per platform. */
 export interface LibraryBackend {
-  listTree(): Promise<LibraryEntry[]>;
+  listTree(): Promise<LibraryListing>;
   createDocument(path: string): Promise<void>;
   createFolder(path: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
@@ -41,7 +41,7 @@ export function desktopLibraryBackend(bridge: DesktopBridge): LibraryBackend {
 /** Any DocumentStore (localStorage, memory). Single writer, so no change events. */
 export function storeLibraryBackend(store: DocumentStore): LibraryBackend {
   return {
-    listTree: () => listAll(store),
+    listTree: async () => ({ entries: await listAll(store), truncated: false }),
     async createDocument(p) {
       if ((await store.read(p)) !== null) throw new DocumentStoreError('exists', `${p} already exists`);
       await store.write(p, '');
