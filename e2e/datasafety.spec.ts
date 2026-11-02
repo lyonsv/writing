@@ -329,3 +329,52 @@ test('closing the window while a save is failing asks too; Cancel keeps the wind
   }
   await quitAndWait(app);
 });
+
+test('CRLF files stay CRLF after editing (and a UTF-8 BOM survives)', async () => {
+  const lib = newLibrary();
+  const file = path.join(lib, 'Untitled.md');
+  writeFileSync(file, '﻿# Title\r\n\r\nBody\r\n');
+  const app = await launch(lib);
+  const page = await app.firstWindow();
+  await expect(page.locator('.cm-content')).toContainText('Body');
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('Meta+ArrowDown');
+  await page.keyboard.type('more');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('last');
+  await expect.poll(() => read(file)).toBe('﻿# Title\r\n\r\nBody\r\nmore\r\nlast');
+  await quitAndWait(app);
+  expect(read(file)).toBe('﻿# Title\r\n\r\nBody\r\nmore\r\nlast');
+});
+
+test('non-UTF-8 files open read-only with a notice and are never rewritten', async () => {
+  const lib = newLibrary();
+  const file = path.join(lib, 'Untitled.md');
+  const latin1 = Buffer.from('# Caf\xe9\n\nNa\xefve text.\n', 'latin1');
+  writeFileSync(file, latin1);
+  const app = await launch(lib);
+  const page = await app.firstWindow();
+  await expect(page.locator('.cm-content')).toContainText('Café');
+  await expect(page.getByTestId('save-status')).toContainText('Read-only');
+  await page.locator('.cm-content').click();
+  await page.keyboard.type('typing does nothing');
+  await expect(page.locator('.cm-content')).not.toContainText('typing does nothing');
+  const direct = await page.evaluate(async () => {
+    const d = (window as unknown as { marginDesktop: { documents: { save(p: string, c: string): Promise<unknown> } } })
+      .marginDesktop.documents;
+    try {
+      await d.save('Untitled.md', 'overwrite');
+      return 'allowed';
+    } catch (e) {
+      return (e as Error).message.includes('not UTF-8') ? 'refused' : (e as Error).message;
+    }
+  });
+  expect(direct).toBe('refused');
+  // Read-only notice stays visible in focus mode too.
+  await app.evaluate(({ BrowserWindow, Menu }) =>
+    Menu.getApplicationMenu()!.getMenuItemById('focus-mode')!.click(undefined, BrowserWindow.getAllWindows()[0]),
+  );
+  await expect(page.getByTestId('save-status')).toContainText('Read-only');
+  await quitAndWait(app);
+  expect(readFileSync(file).equals(latin1)).toBe(true);
+});

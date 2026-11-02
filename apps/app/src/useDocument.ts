@@ -1,4 +1,12 @@
-import { FLUSH_EVENT, SaveScheduler, basename, type SaveStatus } from '@margin/core';
+import {
+  FLUSH_EVENT,
+  SaveScheduler,
+  basename,
+  detectLineEnding,
+  withLineEnding,
+  type LineEnding,
+  type SaveStatus,
+} from '@margin/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ExternalContent } from '../components/editor/MarkdownEditor';
@@ -6,7 +14,7 @@ import { getDocumentBackend } from './storage/documentStore';
 
 export type LoadState =
   | { status: 'loading' }
-  | { status: 'ready'; initialText: string }
+  | { status: 'ready'; initialText: string; readOnly: boolean }
   | { status: 'error'; message: string };
 
 export interface DocumentSession {
@@ -16,6 +24,8 @@ export interface DocumentSession {
   saveStatus: SaveStatus;
   /** One-line, non-blocking message (e.g. a conflict copy was created). */
   notice: string | null;
+  /** A warning that must stay visible even in focus mode (e.g. read-only file). */
+  warning: string | null;
   external: ExternalContent | null;
   onChange: (text: string) => Promise<void>;
   onExternalResult: (token: string, applied: boolean) => Promise<void>;
@@ -32,6 +42,9 @@ export function useDocument(initialPath: string): DocumentSession {
   const [path, setPath] = useState(initialPath);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [notice, setNotice] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  /** The file's line ending; editor text is \n-only and converted back on save. */
+  const eolRef = useRef<LineEnding>('\n');
   const [external, setExternal] = useState<ExternalContent | null>(null);
   const pathRef = useRef(initialPath);
   const schedulerRef = useRef<SaveScheduler | null>(null);
@@ -44,7 +57,7 @@ export function useDocument(initialPath: string): DocumentSession {
 
     const scheduler = new SaveScheduler(
       async (text) => {
-        const result = await backend.save(pathRef.current, text);
+        const result = await backend.save(pathRef.current, withLineEnding(text, eolRef.current));
         if (result.status === 'conflict' && pathRef.current !== result.conflictPath) {
           pathRef.current = result.conflictPath;
           if (!cancelled) {
@@ -68,7 +81,12 @@ export function useDocument(initialPath: string): DocumentSession {
     backend
       .open(initialPath)
       .then((doc) => {
-        if (!cancelled) setLoad({ status: 'ready', initialText: doc.content });
+        if (cancelled) return;
+        eolRef.current = detectLineEnding(doc.content);
+        if (doc.readOnly === 'not-utf8') {
+          setWarning('Read-only: this file isn’t UTF-8 text, so editing it here could corrupt it.');
+        }
+        setLoad({ status: 'ready', initialText: doc.content, readOnly: doc.readOnly !== undefined });
       })
       .catch((error: unknown) => {
         if (!cancelled) setLoad({ status: 'error', message: error instanceof Error ? error.message : String(error) });
@@ -78,6 +96,7 @@ export function useDocument(initialPath: string): DocumentSession {
       if (change.path !== pathRef.current) return;
       // With saves outstanding, let the save pipeline detect the conflict instead.
       if (scheduler.dirty) return;
+      eolRef.current = detectLineEnding(change.content);
       setExternal({ text: change.content, token: change.token });
     });
 
@@ -86,7 +105,12 @@ export function useDocument(initialPath: string): DocumentSession {
       if (typeof window !== 'undefined') window.dispatchEvent(new Event(FLUSH_EVENT));
       await scheduler.flush();
       if (!scheduler.dirty) return { clean: true };
-      return { clean: false, path: pathRef.current, unsavedText: scheduler.latestText ?? undefined };
+      const latest = scheduler.latestText;
+      return {
+        clean: false,
+        path: pathRef.current,
+        unsavedText: latest === null ? undefined : withLineEnding(latest, eolRef.current),
+      };
     });
 
     return () => {
@@ -107,5 +131,5 @@ export function useDocument(initialPath: string): DocumentSession {
     await backend.acknowledgeExternal?.(pathRef.current, token);
   }, []);
 
-  return { load, path, saveStatus, notice, external, onChange, onExternalResult };
+  return { load, path, saveStatus, notice, warning, external, onChange, onExternalResult };
 }

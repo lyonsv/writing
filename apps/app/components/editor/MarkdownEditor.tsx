@@ -38,6 +38,8 @@ export interface MarkdownEditorProps {
    */
   external?: ExternalContent | null;
   onExternalResult?: (token: string, applied: boolean) => Promise<void>;
+  /** Show the text but refuse edits (e.g. a non-UTF-8 file). Read at mount. */
+  readOnly?: boolean;
   /** Focus mode on: hides the scrollbar (cursor-only chrome). */
   focusMode?: boolean;
   /** What to keep undimmed; `null` = no dimming. */
@@ -85,6 +87,7 @@ export default function MarkdownEditor({
   onChange,
   external,
   onExternalResult,
+  readOnly = false,
   focusMode = false,
   focusScope = null,
   typewriter = false,
@@ -102,7 +105,7 @@ export default function MarkdownEditor({
   const onCommandRef = useRef(onCommand);
   onCommandRef.current = onCommand;
   const compartments = useRef({ focus: new Compartment(), typewriter: new Compartment(), entering: new Compartment() });
-  const initialConfig = useRef({ focusMode, focusScope, typewriter });
+  const initialConfig = useRef({ focusMode, focusScope, typewriter, readOnly });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -139,6 +142,7 @@ export default function MarkdownEditor({
             autocorrect: 'on',
             autocapitalize: 'sentences',
           }),
+          EditorState.readOnly.of(initialConfig.current.readOnly),
           focusExtensions(),
           compartments.current.focus.of(focusConfig(initialConfig.current.focusMode, initialConfig.current.focusScope)),
           compartments.current.typewriter.of(typewriterConfig(initialConfig.current.typewriter)),

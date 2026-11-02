@@ -45,6 +45,12 @@ export type SaveResult =
 export interface OpenedDocument {
   path: string;
   content: string;
+  /**
+   * Set when the file must not be edited. `not-utf8`: the bytes aren't valid
+   * UTF-8 (e.g. Latin-1/UTF-16), so `content` is a lossy preview and saving
+   * would corrupt the file; the main process refuses saves to it.
+   */
+  readOnly?: 'not-utf8';
 }
 
 /** Sent when the open document changes on disk without us writing it. */

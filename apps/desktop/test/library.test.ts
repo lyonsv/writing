@@ -209,3 +209,18 @@ describe('FileSystemLibrary without hard links (exFAT, network shares)', () => {
     await expect(l.open('x.md')).rejects.toMatchObject({ code: 'EIO' });
   });
 });
+
+describe('FileSystemLibrary encodings', () => {
+  it('opens non-UTF-8 files read-only and refuses to save them', async () => {
+    const latin1 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]); // "café\n" in Latin-1
+    writeFileSync(path.join(root, 'latin1.md'), latin1);
+    expect(await lib.open('latin1.md')).toEqual({ path: 'latin1.md', content: 'café\n', readOnly: 'not-utf8' });
+    await expect(lib.save('latin1.md', 'café edited\n')).rejects.toBeInstanceOf(DisallowedPathError);
+    expect(readFileSync(path.join(root, 'latin1.md')).equals(latin1)).toBe(true);
+  });
+
+  it('keeps CRLF bytes and a UTF-8 BOM intact on open', async () => {
+    writeFileSync(path.join(root, 'crlf.md'), '﻿a\r\nb\r\n');
+    expect(await lib.open('crlf.md')).toEqual({ path: 'crlf.md', content: '﻿a\r\nb\r\n' });
+  });
+});

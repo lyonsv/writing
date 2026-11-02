@@ -18,13 +18,16 @@ export default function EditorScreen() {
   // Nothing is shown while everything is saved. In focus mode only the
   // "Not saved" warning may appear; informational notices are suppressed.
   const status =
-    doc.saveStatus === 'error' ? 'Not saved — retrying' : settings.focusMode ? null : doc.notice;
+    doc.saveStatus === 'error'
+      ? 'Not saved — retrying'
+      : (doc.warning ?? (settings.focusMode ? null : doc.notice));
 
   return (
     <View style={[styles.root, { backgroundColor: background }]}>
       {doc.load.status === 'ready' ? (
         <MarkdownEditor
           initialValue={doc.load.initialText}
+          readOnly={doc.load.readOnly}
           onChange={doc.onChange}
           external={doc.external}
           onExternalResult={doc.onExternalResult}
@@ -41,7 +44,7 @@ export default function EditorScreen() {
         <Text
           testID="save-status"
           accessibilityRole="alert"
-          style={[styles.status, { color: doc.saveStatus === 'error' ? '#c2410c' : muted }]}
+          style={[styles.status, { color: doc.saveStatus === 'error' || doc.warning ? '#c2410c' : muted }]}
         >
           {status}
         </Text>

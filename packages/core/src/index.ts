@@ -8,3 +8,4 @@ export * from './conflict';
 export * from './saveScheduler';
 export * from './focus';
 export * from './settings';
+export * from './lineEndings';

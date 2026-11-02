@@ -62,6 +62,18 @@ async function lstatOrNull(p: string): Promise<Stats | null> {
 
 const hashOf = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
 
+// ignoreBOM: keep a leading U+FEFF in the text so it is written back unchanged.
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
+
+/** Decodes UTF-8, or returns null if the bytes aren't valid UTF-8. */
+function decodeUtf8(buf: Buffer): string | null {
+  try {
+    return strictUtf8.decode(buf);
+  } catch {
+    return null;
+  }
+}
+
 async function fsyncDir(dir: string): Promise<void> {
   // Persist the rename/link itself. Not supported everywhere; best effort.
   try {
@@ -159,6 +171,8 @@ export class FileSystemLibrary implements DocumentStore {
   /** After a conflict on `key`, further saves to `key` go to the conflict copy while disk is unchanged. */
   private readonly redirects = new Map<string, { to: string; diskHash: string }>();
   private readonly watchers = new Map<string, AbortController>();
+  /** Opened documents that aren't UTF-8: saving would corrupt them. */
+  private readonly readOnly = new Set<string>();
   private readonly watchTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
@@ -279,6 +293,9 @@ export class FileSystemLibrary implements DocumentStore {
     } catch (error) {
       return Promise.reject(error);
     }
+    if (this.readOnly.has(key)) {
+      return Promise.reject(new DisallowedPathError(key, 'not UTF-8 text; opened read-only'));
+    }
     const seq = ++this.writeSeq;
     this.latestWrite.set(key, seq);
     return this.queue.run(key, async (): Promise<SaveResult> => {
@@ -384,7 +401,13 @@ export class FileSystemLibrary implements DocumentStore {
       const stat = await fs.stat(file);
       this.known.set(key, { hash: hashOf(buf), mtimeMs: stat.mtimeMs, size: stat.size });
       this.redirects.delete(key);
-      return { path: key, content: buf.toString('utf8') };
+      const text = decodeUtf8(buf);
+      if (text === null) {
+        this.readOnly.add(key);
+        return { path: key, content: buf.toString('latin1'), readOnly: 'not-utf8' as const };
+      }
+      this.readOnly.delete(key);
+      return { path: key, content: text };
     });
     this.watch(key, file);
     return doc;
@@ -532,8 +555,12 @@ export class FileSystemLibrary implements DocumentStore {
             if (!known) return;
             const disk = await this.currentVersion(file);
             if (!disk || disk.hash === known.hash) return;
-            const content = await fs.readFile(file, 'utf8');
-            if (hashOf(content) !== disk.hash) return this.scheduleCheck(key, file); // changed again mid-read
+            const buf = await fs.readFile(file);
+            if (hashOf(buf) !== disk.hash) return this.scheduleCheck(key, file); // changed again mid-read
+            const content = decodeUtf8(buf);
+            // Not UTF-8 any more: don't offer it to the editor. A later save will see
+            // the changed hash and go to a conflict copy, leaving these bytes alone.
+            if (content === null) return;
             this.options.onExternalChange?.({ path: key, content, token: disk.hash });
           })
           .catch((error: unknown) => console.error('Margin: external change check failed', error));
