@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Margin",
+    "slug": "margin",
+    "scheme": "margin",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.lyonsv.margin"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"]
+  }
+}

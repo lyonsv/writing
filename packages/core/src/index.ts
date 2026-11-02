@@ -3,3 +3,4 @@ export * from './document';
 export * from './store';
 export * from './memoryStore';
 export * from './markdown';
+export * from './bridge';
