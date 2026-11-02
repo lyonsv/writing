@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { IPC_CHANNELS, type ExternalChange } from '@margin/core';
+import { IPC_CHANNELS, type ExternalChange, type FocusScopeSetting, type Settings } from '@margin/core';
 import {
   BrowserWindow,
   Menu,
@@ -15,6 +15,7 @@ import {
 } from 'electron';
 
 import { FileSystemLibrary } from './library';
+import { SettingsFile } from './settings';
 import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
 
 /**
@@ -37,6 +38,8 @@ registerAppScheme();
 
 const libraryDir = path.resolve(process.env.MARGIN_LIBRARY_DIR ?? path.join(app.getPath('documents'), 'Margin'));
 const library = new FileSystemLibrary(libraryDir, { onExternalChange: broadcastExternalChange });
+
+let settings: SettingsFile;
 
 function broadcastExternalChange(change: ExternalChange): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -120,7 +123,7 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   quitting = true;
   void Promise.all(BrowserWindow.getAllWindows().map(flushWindow))
-    .then(() => library.idle())
+    .then(() => Promise.all([library.idle(), settings?.idle()]))
     .catch((error: unknown) => console.error('Margin: flush before quit failed', error))
     .finally(() => {
       quitReady = true;
@@ -148,6 +151,12 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.save, (p: string, content: string) => library.save(p, content));
   handle(IPC_CHANNELS.acknowledgeExternal, (p: string, token: string) => library.acknowledgeExternal(p, token));
   handle(IPC_CHANNELS.libraryRoot, async () => library.root);
+  handle(IPC_CHANNELS.settingsLoad, async () => settings.get());
+  // Not via handle(): the patch is an object, validated by parseSettingsPatch inside update().
+  ipcMain.handle(IPC_CHANNELS.settingsUpdate, (event, patch: unknown) => {
+    assertTrustedSender(event);
+    return settings.update(patch);
+  });
   handle(IPC_CHANNELS.toggleFullScreen, async () => toggleFullScreen());
 
   ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown) => {
@@ -166,6 +175,38 @@ function toggleFullScreen(win = BrowserWindow.getFocusedWindow() ?? BrowserWindo
   if (win) win.setFullScreen(!win.isFullScreen());
 }
 
+function updateSettings(patch: Partial<Settings>): void {
+  void settings.update(patch);
+}
+
+const scopeItem = (scope: FocusScopeSetting, label: string, accelerator: string): MenuItemConstructorOptions => ({
+  id: `focus-scope-${scope}`,
+  label,
+  type: 'radio',
+  accelerator,
+  checked: settings.get().focusScope === scope,
+  click: () => updateSettings({ focusScope: scope }),
+});
+
+/** Reflects settings in the menu and window chrome. */
+function applySettings(s: Settings): void {
+  const menu = Menu.getApplicationMenu();
+  const set = (id: string, checked: boolean) => {
+    const item = menu?.getMenuItemById(id);
+    if (item) item.checked = checked;
+  };
+  set('focus-mode', s.focusMode);
+  set('typewriter', s.typewriter);
+  // Radio items: only ever set the selected one; Electron unchecks the rest of the group
+  // (setting a radio item to false makes Electron check a sibling instead).
+  set(`focus-scope-${s.focusScope}`, true);
+  for (const win of BrowserWindow.getAllWindows()) {
+    // Focus mode: cursor-only, also when windowed: hide the traffic lights.
+    if (process.platform === 'darwin' && !win.isDestroyed()) win.setWindowButtonVisibility(!s.focusMode);
+    if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.settingsChanged, s);
+  }
+}
+
 function buildMenu(): void {
   const template: MenuItemConstructorOptions[] = [
     { role: 'appMenu' },
@@ -177,6 +218,31 @@ function buildMenu(): void {
     {
       label: 'View',
       submenu: [
+        {
+          id: 'focus-mode',
+          label: 'Focus Mode',
+          type: 'checkbox',
+          accelerator: 'CommandOrControl+Shift+F',
+          checked: settings.get().focusMode,
+          click: () => updateSettings({ focusMode: !settings.get().focusMode }),
+        },
+        {
+          label: 'Focus On',
+          submenu: [
+            scopeItem('sentence', 'Sentence', 'Alt+CommandOrControl+1'),
+            scopeItem('paragraph', 'Paragraph', 'Alt+CommandOrControl+2'),
+            scopeItem('off', 'Nothing (Hide Chrome Only)', 'Alt+CommandOrControl+0'),
+          ],
+        },
+        {
+          id: 'typewriter',
+          label: 'Typewriter Scrolling',
+          type: 'checkbox',
+          accelerator: 'Alt+CommandOrControl+T',
+          checked: settings.get().typewriter,
+          click: () => updateSettings({ typewriter: !settings.get().typewriter }),
+        },
+        { type: 'separator' },
         {
           id: 'toggle-fullscreen',
           label: 'Enter Full Screen',
@@ -227,6 +293,7 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  if (process.platform === 'darwin') win.setWindowButtonVisibility(!settings.get().focusMode);
   win.once('ready-to-show', () => (process.env.MARGIN_SHOW_INACTIVE ? win.showInactive() : win.show()));
   win.on('enter-full-screen', () => updateFullScreenLabel(true));
   win.on('leave-full-screen', () => updateFullScreenLabel(false));
@@ -262,6 +329,9 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   await library.init();
+  settings = new SettingsFile(path.join(app.getPath('userData'), 'settings.json'));
+  await settings.load();
+  settings.onChange(applySettings);
   // No camera, mic, notifications, etc.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   if (!DEV_SERVER_URL) handleAppScheme(webRoot());

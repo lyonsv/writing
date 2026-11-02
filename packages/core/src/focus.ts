@@ -136,8 +136,14 @@ export interface Block {
 export interface DocAccess {
   readonly length: number;
   readonly lineCount: number;
+  /**
+   * The line's text. May be truncated to a prefix (at least 256 chars) for
+   * long lines: block detection only looks at line starts.
+   */
   lineText(line: number): string;
   lineStart(line: number): number;
+  /** Offset of the end of the line (before its newline). */
+  lineEnd(line: number): number;
   lineAt(pos: number): number;
   slice(from: number, to: number): string;
 }
@@ -260,7 +266,7 @@ export function focusRangeAt(doc: DocAccess, pos: number, scope: FocusScope, opt
   if (block.kind === 'blank') return { kind: 'blank', from: clamped, to: clamped };
 
   const from = doc.lineStart(block.startLine);
-  const to = doc.lineStart(block.endLine) + doc.lineText(block.endLine).length;
+  const to = doc.lineEnd(block.endLine);
   const wholeBlock = { kind: block.kind, from, to };
   if (scope === 'paragraph' || block.kind === 'heading' || block.kind === 'code' || block.kind === 'thematic-break') {
     return wholeBlock;
@@ -283,6 +289,7 @@ export function stringDoc(text: string): DocAccess {
     lineCount: starts.length,
     lineStart: (line) => starts[line]!,
     lineText: (line) => text.slice(starts[line]!, line + 1 < starts.length ? starts[line + 1]! - 1 : text.length),
+    lineEnd: (line) => (line + 1 < starts.length ? starts[line + 1]! - 1 : text.length),
     lineAt: (pos) => {
       let lo = 0;
       let hi = starts.length - 1;

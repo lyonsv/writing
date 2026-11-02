@@ -1,4 +1,5 @@
 import type { LibraryEntry } from './document';
+import type { Settings } from './settings';
 
 /**
  * Contract between the Electron preload script and the shared app.
@@ -21,6 +22,9 @@ export const IPC_CHANNELS = {
   externalChange: 'margin:doc:external-change',
   flushRequest: 'margin:flush-request',
   flushDone: 'margin:flush-done',
+  settingsLoad: 'margin:settings:load',
+  settingsUpdate: 'margin:settings:update',
+  settingsChanged: 'margin:settings:changed',
   libraryRoot: 'margin:library-root',
   toggleFullScreen: 'margin:window:toggle-fullscreen',
 } as const;
@@ -69,10 +73,19 @@ export interface DesktopDocumentsBridge {
   onExternalChange(listener: (change: ExternalChange) => void): () => void;
 }
 
+export interface DesktopSettingsBridge {
+  load(): Promise<Settings>;
+  /** Unknown keys / invalid values are ignored by the main process. */
+  update(patch: Partial<Settings>): Promise<Settings>;
+  /** Fires after any change, including ones made from the application menu. */
+  onChange(listener: (settings: Settings) => void): () => void;
+}
+
 export interface DesktopBridge {
   platform: string;
   store: DesktopStoreBridge;
   documents: DesktopDocumentsBridge;
+  settings: DesktopSettingsBridge;
   /**
    * Registers a handler the main process runs before a window closes or the app
    * quits; the close/quit waits for every handler's promise.

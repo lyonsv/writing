@@ -1,4 +1,4 @@
-import { DESKTOP_BRIDGE_KEY, IPC_CHANNELS, type DesktopBridge, type ExternalChange } from '@margin/core';
+import { DESKTOP_BRIDGE_KEY, IPC_CHANNELS, type DesktopBridge, type ExternalChange, type Settings } from '@margin/core';
 import { contextBridge, ipcRenderer } from 'electron';
 
 // Sandboxed preload: only `electron` may be required at runtime; @margin/core is
@@ -33,6 +33,17 @@ const bridge: DesktopBridge = {
       ipcRenderer.on(IPC_CHANNELS.externalChange, wrapped);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.externalChange, wrapped);
+      };
+    },
+  },
+  settings: {
+    load: () => invoke(IPC_CHANNELS.settingsLoad),
+    update: (patch) => invoke(IPC_CHANNELS.settingsUpdate, patch),
+    onChange: (listener) => {
+      const wrapped = (_event: unknown, s: Settings) => listener(s);
+      ipcRenderer.on(IPC_CHANNELS.settingsChanged, wrapped);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.settingsChanged, wrapped);
       };
     },
   },
