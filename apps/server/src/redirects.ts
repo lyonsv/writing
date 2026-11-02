@@ -4,7 +4,7 @@
  * core ships raw TS that the Vercel Node builder isn't guaranteed to compile.
  */
 export const CUSTOM_SCHEME_REDIRECT = 'margin://auth/callback';
-export const CUSTOM_SCHEME_ENABLED = false;
+export const CUSTOM_SCHEME_ENABLED = true;
 
 /**
  * Redirect-target allowlists. The server only ever redirects to:
@@ -24,9 +24,11 @@ export const CUSTOM_SCHEME_ENABLED = false;
 const LOOPBACK = /^http:\/\/(?:127\.0\.0\.1|\[::1\]):([1-9]\d{3,4})\/callback$/;
 
 export function isAllowedNativeRedirect(uri: string): boolean {
-  // The custom scheme is NOT accepted yet: nothing claims margin:// on macOS until
-  // the iOS app ships it (M6), so a redirect there could be caught by any app that
-  // registers the scheme. Re-enable with the iOS app (ROADMAP M6, ADR 0011).
+  // The iOS app's custom scheme (M6, ADR 0017). Another app could register margin://
+  // too; the mitigations are PKCE (the code is useless without the verifier held by
+  // the app that started), ASWebAuthenticationSession returning the callback only to
+  // the app that opened it, and the "Sign in a new device?" page that a crafted link
+  // can't skip (ADR 0010 amendments). Exact match only.
   if (CUSTOM_SCHEME_ENABLED && uri === CUSTOM_SCHEME_REDIRECT) return true;
   const m = LOOPBACK.exec(uri);
   if (!m) return false;

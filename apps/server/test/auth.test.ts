@@ -251,14 +251,34 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(new URL(res.headers.get('Location')!).searchParams.get('error')).toBe('server_error');
   });
 
-  it('refuses the iOS custom scheme until M6 (nothing claims margin:// on macOS yet)', async () => {
+  it('accepts the iOS custom scheme margin://auth/callback exactly (M6), after the confirmation page', async () => {
     expect(CUSTOM_SCHEME_REDIRECT).toBe(NATIVE_CUSTOM_SCHEME_REDIRECT);
     const h = setup();
-    const res = await h.req(
+    const a = await nativeAuthorize(h, OWNER, { redirectUri: 'margin://auth/callback', deviceName: 'iPhone' });
+    expect(a.start.status).toBe(302); // got past "Sign in a new device?" (nativeStart pressed Continue)
+    expect(a.location!.toString().startsWith('margin://auth/callback?')).toBe(true);
+    expect(a.location!.searchParams.get('state')).toBe(a.appState);
+    const code = a.location!.searchParams.get('code')!;
+    // The code is bound to the custom-scheme redirect: a different redirect can't redeem it.
+    expect((await exchange(h, { code, code_verifier: a.verifier, redirect_uri: LOOPBACK })).status).toBe(400);
+    const b = await nativeAuthorize(h, OWNER, { redirectUri: 'margin://auth/callback' });
+    const res = await exchange(h, { code: b.location!.searchParams.get('code'), code_verifier: b.verifier, redirect_uri: 'margin://auth/callback', device_name: 'iPhone' });
+    expect(res.status).toBe(200);
+  });
+
+  it('cancelling the confirmation page returns access_denied to the custom scheme, without GitHub', async () => {
+    const h = setup();
+    const jar = new Jar();
+    const res = await nativeStart(
+      h,
+      jar,
       `/api/auth/native/start?${new URLSearchParams({ redirect_uri: 'margin://auth/callback', code_challenge: s256(newVerifier()), code_challenge_method: 'S256', state: 'appstate-0123456789' })}`,
+      'cancel',
     );
-    expect(res.status).toBe(400);
-    expect(res.headers.get('Location')).toBeNull();
+    const loc = new URL(res.headers.get('Location')!);
+    expect(loc.protocol).toBe('margin:');
+    expect(loc.searchParams.get('error')).toBe('access_denied');
+    expect(loc.searchParams.get('code')).toBeNull();
   });
 
   it('sends PKCE to GitHub and keeps its own verifier server-side', async () => {
@@ -378,7 +398,10 @@ describe('open redirects', () => {
     'http://0x7f000001:8080/callback',
     'margin://auth/callback/../../evil',
     'margin://evil/callback',
-    'margin://auth/callback', // disabled until M6
+    'margin://auth/callback/',
+    'MARGIN://auth/callback',
+    'margin://auth/callback#x',
+    'margin:auth/callback',
     'margin://auth/callback?x=1',
     'javascript:alert(1)',
     '//evil.example/callback',
