@@ -50,6 +50,10 @@ interface Session {
 
 export class AccountError extends Error {}
 
+export const SIGN_OUT_UNCONFIRMED =
+  'Signed out on this Mac, but the server didn’t confirm it, so this device’s token may still be active. ' +
+  'Revoke it in Account and Devices on another signed-in device (unused tokens expire after 90 days).';
+
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 const DEVICE_ID = /^[A-Za-z0-9_-]{22}$/;
 
@@ -254,16 +258,27 @@ export class AccountManager {
     }
   }
 
-  /** Revokes this device on the server (best effort; offline still signs out locally). */
+  /**
+   * Revokes this device on the server, then forgets the token locally whatever
+   * happens. If the server didn't confirm the revoke (offline, 5xx…), the token
+   * may still be valid there: say so, and point to Account and Devices.
+   */
   async signOut(): Promise<AccountStatus> {
+    let warning: string | undefined;
     if (this.activeSession()) {
       try {
-        await this.request('POST', '/api/auth/signout');
-      } catch {
-        // Offline: the local token is deleted anyway; it can be revoked from another device.
+        const res = await this.request('POST', '/api/auth/signout');
+        if (res.status !== 204 && res.status !== 200) warning = SIGN_OUT_UNCONFIRMED;
+      } catch (error) {
+        // A 401 means the token was already dead (request() cleared it): nothing to warn about.
+        if (!(error instanceof AccountError && this.session === null && /revoked or expired/.test(error.message))) {
+          warning = SIGN_OUT_UNCONFIRMED;
+        }
       }
     }
     await this.clear();
+    this.lastError = warning;
+    this.changed();
     return this.status();
   }
 

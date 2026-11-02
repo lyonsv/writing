@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 
 // Test-only cross-app import: the real server and a mock GitHub over real HTTP.
 import { browse, startMockGitHub, startTestServer } from '../../server/test/mockGitHubHttp';
-import { AccountManager, parseServerUrl, type SecretBox } from '../src/account';
+import { AccountManager, SIGN_OUT_UNCONFIRMED, parseServerUrl, type SecretBox } from '../src/account';
 
 const OWNER = { login: 'lyonsv', id: 1234567 };
 
@@ -141,6 +141,44 @@ describe('desktop sign-in round trip (loopback + PKCE) against a local server an
     expect((await m.signOut()).state).toBe('signed-out');
     expect((await fetch(`${server.url}/api/me`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(401);
     expect(existsSync(path.join(dir, 'account', 'session.bin'))).toBe(false);
+  });
+
+  it('sign out still forgets the token when the server fails to revoke, and warns that it may be active', async () => {
+    for (const failure of ['500', 'network'] as const) {
+      const m = new AccountManager({
+        file: path.join(dir, 'account', 'session.bin'),
+        serverUrl: () => server.url,
+        openExternal: async (u) => void browse(u),
+        secretBox: box(),
+        deviceName: () => 'Flaky Mac',
+        fetch: async (input, init) => {
+          if (String(input).endsWith('/api/auth/signout')) {
+            if (failure === 'network') throw new TypeError('fetch failed');
+            return new Response('{"error":"server_error"}', { status: 500 });
+          }
+          return fetch(input, init);
+        },
+      });
+      await m.signIn();
+      const status = await m.signOut();
+      expect(status).toMatchObject({ state: 'signed-out', error: SIGN_OUT_UNCONFIRMED });
+      expect(status.state === 'signed-out' && status.error).toContain('Account and Devices');
+      expect(existsSync(path.join(dir, 'account', 'session.bin'))).toBe(false);
+    }
+  });
+
+  it('sign out of an already-revoked device does not warn', async () => {
+    const m = manager();
+    await m.signIn();
+    await m.revokeDevice((m.status() as { deviceId: string }).deviceId).catch(() => undefined);
+    // Signed in again, then revoked behind its back.
+    await m.signIn();
+    const id = (m.status() as { deviceId: string }).deviceId;
+    const other = manager();
+    await other.load();
+    const peekToken = (other as unknown as { session: { token: string } }).session.token;
+    await fetch(`${server.url}/api/devices/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${peekToken}` } });
+    expect(await m.signOut()).toEqual({ state: 'signed-out', serverUrl: server.url });
   });
 
   it('reports a non-allowlisted GitHub account without storing anything', async () => {
