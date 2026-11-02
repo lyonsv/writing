@@ -2,6 +2,7 @@ import {
   APP_COMMANDS,
   DESKTOP_BRIDGE_KEY,
   IPC_CHANNELS,
+  type AccountStatus,
   type AppCommand,
   type DesktopBridge,
   type ExternalChange,
@@ -93,6 +94,21 @@ const bridge: DesktopBridge = {
     return () => {
       flushHandlers.delete(handler);
     };
+  },
+  // The token lives in main only; these calls return statuses and device lists, never the token.
+  account: {
+    status: () => invoke(IPC_CHANNELS.accountStatus),
+    signIn: () => invoke(IPC_CHANNELS.accountSignIn),
+    signOut: () => invoke(IPC_CHANNELS.accountSignOut),
+    listDevices: () => invoke(IPC_CHANNELS.accountDevices),
+    revokeDevice: (id) => invoke(IPC_CHANNELS.accountRevoke, id),
+    onChange: (listener) => {
+      const wrapped = (_event: unknown, s: AccountStatus) => listener(s);
+      ipcRenderer.on(IPC_CHANNELS.accountChanged, wrapped);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.accountChanged, wrapped);
+      };
+    },
   },
   libraryRoot: () => invoke(IPC_CHANNELS.libraryRoot),
   toggleFullScreen: () => invoke(IPC_CHANNELS.toggleFullScreen),

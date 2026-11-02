@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { promises as fs, statSync } from 'node:fs';
+import os from 'node:os';
 
 import {
   IPC_CHANNELS,
@@ -20,6 +21,7 @@ import {
   dialog,
   ipcMain,
   nativeTheme,
+  safeStorage,
   session,
   shell,
   type IpcMainEvent,
@@ -29,6 +31,7 @@ import {
 
 import { watch as watchTree, type FSWatcher } from 'chokidar';
 
+import { AccountError, AccountManager } from './account';
 import { FileSystemLibrary } from './library';
 import { SettingsFile } from './settings';
 import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
@@ -42,6 +45,7 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_SHOW_INACTIVE   show the window without taking OS focus (automated tests)
  *   MARGIN_TEST_NO_HARDLINKS  simulate a filesystem without hard links (tests)
  *   MARGIN_TEST_LIST_LIMIT    cap the library listing at this many entries (tests)
+ *   MARGIN_SERVER_URL      Margin server origin for sign-in (else settings.serverUrl, else http://127.0.0.1:3000)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
 /**
@@ -61,6 +65,54 @@ registerAppScheme();
 let library!: FileSystemLibrary;
 let treeWatcher: FSWatcher | undefined;
 let settings: SettingsFile;
+let account: AccountManager;
+
+export const DEFAULT_SERVER_URL = 'http://127.0.0.1:3000'; // matches pnpm dev:server and the dev OAuth callback
+const serverUrl = () => process.env.MARGIN_SERVER_URL || settings.get().serverUrl || DEFAULT_SERVER_URL;
+
+function createAccount(): AccountManager {
+  return new AccountManager({
+    file: path.join(app.getPath('userData'), 'account', 'session.bin'),
+    serverUrl,
+    openExternal: (url) => shell.openExternal(url),
+    secretBox: {
+      available: () => safeStorage.isEncryptionAvailable(),
+      encrypt: (plain) => safeStorage.encryptString(plain),
+      decrypt: (sealed) => safeStorage.decryptString(sealed),
+    },
+    deviceName: () => `${os.hostname().replace(/\.local$/, '')} (Margin for Mac)`,
+    onChange: (status) => {
+      updateAccountMenu();
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.accountChanged, status);
+      }
+    },
+  });
+}
+
+function updateAccountMenu(): void {
+  const menu = Menu.getApplicationMenu();
+  const state = account?.status().state;
+  const signIn = menu?.getMenuItemById('sign-in');
+  const signOut = menu?.getMenuItemById('sign-out');
+  if (signIn) signIn.enabled = state !== 'signed-in';
+  if (signOut) signOut.enabled = state === 'signed-in';
+}
+
+/** Account errors carry user-facing text; anything else gets a generic message (no internals over IPC). */
+async function accountCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    throw new Error(error instanceof AccountError ? error.message : 'Something went wrong talking to the server.');
+  }
+}
+
+/** Sign In… from the menu: show the Account panel (so progress and errors are visible) and start. */
+function menuSignIn(): void {
+  sendCommand('account');
+  void account.signIn().catch(() => undefined); // the error is shown in the panel via status
+}
 
 const defaultLibraryDir = () => path.join(app.getPath('documents'), 'Margin');
 
@@ -387,12 +439,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC_CHANNELS.settingsUpdate, (event, patch: unknown) => {
     assertTrustedSender(event);
     if (typeof patch === 'object' && patch !== null) {
-      const { libraryDir: _ignored, ...rest } = patch as Record<string, unknown>;
+      const { libraryDir: _ignored, serverUrl: _ignoredToo, ...rest } = patch as Record<string, unknown>;
       return settings.update(rest);
     }
     return settings.get();
   });
   handle(IPC_CHANNELS.toggleFullScreen, async () => toggleFullScreen());
+  handle(IPC_CHANNELS.accountStatus, async () => account.status());
+  handle(IPC_CHANNELS.accountSignIn, () => accountCall(() => account.signIn()));
+  handle(IPC_CHANNELS.accountSignOut, () => accountCall(() => account.signOut()));
+  handle(IPC_CHANNELS.accountDevices, () => accountCall(() => account.listDevices()));
+  handle(IPC_CHANNELS.accountRevoke, (id: string) => accountCall(() => account.revokeDevice(id)));
 
   ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown, result: unknown) => {
     try {
@@ -446,7 +503,24 @@ function applySettings(s: Settings): void {
 
 function buildMenu(): void {
   const template: MenuItemConstructorOptions[] = [
-    { role: 'appMenu' },
+    {
+      role: 'appMenu',
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { id: 'sign-in', label: 'Sign In…', click: () => menuSignIn() },
+        { id: 'sign-out', label: 'Sign Out', click: () => void account.signOut().catch(() => undefined) },
+        { id: 'account', label: 'Account and Devices…', click: () => sendCommand('account') },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
     {
       label: 'File',
       submenu: [
@@ -534,6 +608,7 @@ function buildMenu(): void {
     { role: 'windowMenu' },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  updateAccountMenu();
 }
 
 function updateFullScreenLabel(fullScreen: boolean): void {
@@ -613,6 +688,9 @@ app.whenReady().then(async () => {
   settings = new SettingsFile(path.join(app.getPath('userData'), 'settings.json'));
   await settings.load();
   settings.onChange(applySettings);
+  // Account: reads the local encrypted session only; no network at startup.
+  account = createAccount();
+  await account.load();
   library = createLibrary(initialLibraryDir());
   await library.init();
   await startTreeWatcher(library.root);

@@ -18,6 +18,12 @@ export interface Settings {
    * this (via the folder picker); renderer patches can't.
    */
   libraryDir?: string;
+  /**
+   * Margin server origin for sign-in (desktop). Main-process only, like
+   * `libraryDir`; set by editing settings.json or MARGIN_SERVER_URL.
+   * Default: http://127.0.0.1:3000 (the local dev server).
+   */
+  serverUrl?: string;
 }
 
 export const DEFAULT_SETTINGS: Readonly<Settings> = Object.freeze({
@@ -41,6 +47,7 @@ export function parseSettingsPatch(input: unknown): Partial<Settings> {
   if (raw.librarySort === 'name' || raw.librarySort === 'modified') out.librarySort = raw.librarySort;
   if (typeof raw.lastDocument === 'string' && raw.lastDocument.length < 4096) out.lastDocument = raw.lastDocument;
   if (typeof raw.libraryDir === 'string' && raw.libraryDir.length < 4096) out.libraryDir = raw.libraryDir;
+  if (typeof raw.serverUrl === 'string' && raw.serverUrl.length < 2048) out.serverUrl = raw.serverUrl;
   if (typeof raw.focusScope === 'string' && (SCOPES as readonly string[]).includes(raw.focusScope)) {
     out.focusScope = raw.focusScope as FocusScopeSetting;
   }

@@ -45,7 +45,8 @@ export const NATIVE_CUSTOM_SCHEME_REDIRECT = 'margin://auth/callback';
 
 /** What the desktop renderer may know about the account. The token never crosses into the renderer. */
 export type AccountStatus =
-  | { state: 'signed-out'; serverUrl: string }
+  /** `error`: why the last sign-in attempt failed or why the device was signed out. */
+  | { state: 'signed-out'; serverUrl: string; error?: string }
   | { state: 'signing-in'; serverUrl: string }
   | { state: 'signed-in'; serverUrl: string; login: string; deviceId: string };
 

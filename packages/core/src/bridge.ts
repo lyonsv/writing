@@ -1,3 +1,4 @@
+import type { AccountBackend } from './account';
 import type { LibraryEntry, LibraryListing } from './document';
 import type { Settings } from './settings';
 
@@ -33,6 +34,12 @@ export const IPC_CHANNELS = {
   settingsChanged: 'margin:settings:changed',
   libraryRoot: 'margin:library-root',
   toggleFullScreen: 'margin:window:toggle-fullscreen',
+  accountStatus: 'margin:account:status',
+  accountSignIn: 'margin:account:sign-in',
+  accountSignOut: 'margin:account:sign-out',
+  accountDevices: 'margin:account:devices',
+  accountRevoke: 'margin:account:revoke',
+  accountChanged: 'margin:account:changed',
 } as const;
 
 /** Window event the editor listens for: flush pending text synchronously via onChange. */
@@ -97,8 +104,8 @@ export interface FlushResult {
 }
 
 /** Commands the desktop menu sends to the renderer. */
-export type AppCommand = 'new-document' | 'new-folder' | 'quick-open';
-export const APP_COMMANDS: readonly AppCommand[] = ['new-document', 'new-folder', 'quick-open'];
+export type AppCommand = 'new-document' | 'new-folder' | 'quick-open' | 'account';
+export const APP_COMMANDS: readonly AppCommand[] = ['new-document', 'new-folder', 'quick-open', 'account'];
 
 export type ContextMenuItem = { id: string; label: string; enabled?: boolean } | { type: 'separator' };
 
@@ -133,6 +140,11 @@ export interface DesktopBridge {
   documents: DesktopDocumentsBridge;
   library: DesktopLibraryBridge;
   settings: DesktopSettingsBridge;
+  /**
+   * Sign-in and device management. Main holds the token (safeStorage) and makes
+   * every authenticated request; the renderer only ever sees `AccountStatus`.
+   */
+  account: Omit<AccountBackend, 'available'>;
   onCommand(listener: (command: AppCommand) => void): () => void;
   /**
    * Registers a handler the main process runs before a window closes or the app
