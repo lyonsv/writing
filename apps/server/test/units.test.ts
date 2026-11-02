@@ -44,14 +44,38 @@ describe('config', () => {
   it('refuses the production GitHub store outside production (ADR 0014/0021)', () => {
     const gh = { MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'lyonsv/margin-library' };
     const base = { ...ENV, ...gh, VERCEL: '1', PRODUCTION_GITHUB_STORE: 'lyonsv/margin-library@main' };
-    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview', GITHUB_STORE_BRANCH: 'main' })).toThrow(/production store/);
-    expect(() => loadConfig({ ...base, VERCEL_ENV: 'development', GITHUB_STORE_REPO: 'LyonsV/Margin-Library', GITHUB_STORE_BRANCH: 'MAIN' })).toThrow(/production store/);
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview', GITHUB_STORE_BRANCH: 'main' })).toThrow(/production branch/);
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'development', GITHUB_STORE_REPO: 'LyonsV/Margin-Library', GITHUB_STORE_BRANCH: 'MAIN' })).toThrow(/production branch/);
     expect(loadConfig({ ...base, VERCEL_ENV: 'preview', GITHUB_STORE_BRANCH: 'preview' })).toBeTruthy();
     // Without PRODUCTION_GITHUB_STORE outside production: refused (fail closed).
     expect(() => loadConfig({ ...ENV, ...gh, GITHUB_STORE_BRANCH: 'preview', VERCEL: '1', VERCEL_ENV: 'preview' })).toThrow(/PRODUCTION_GITHUB_STORE/);
     // Production itself, and local runs (no VERCEL), are unaffected.
     expect(loadConfig({ ...base, VERCEL_ENV: 'production', GITHUB_STORE_BRANCH: 'main' })).toBeTruthy();
     expect(loadConfig({ ...ENV, ...gh, GITHUB_STORE_BRANCH: 'main' })).toBeTruthy();
+  });
+
+  it('the preview guard canonicalises branches: no spelling of the production branch gets through (validator)', () => {
+    const base = { ...ENV, MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', VERCEL: '1', VERCEL_ENV: 'preview', PRODUCTION_GITHUB_STORE: 'lyonsv/margin-library@main' };
+    for (const [repo, branch] of [
+      ['lyonsv/margin-library', 'main'],
+      ['lyonsv/margin-library', 'refs/heads/main'],
+      ['lyonsv/margin-library', 'heads/main'],
+      ['lyonsv/margin-library', 'MAIN'],
+      ['LYONSV/Margin-Library', 'Main'],
+      ['lyonsv/margin-library', ' main '],
+      ['someone/renamed-alias', 'main'], // repo names can alias; the production branch is refused anyway
+    ]) {
+      expect(() => loadConfig({ ...base, GITHUB_STORE_REPO: repo, GITHUB_STORE_BRANCH: branch }), `${repo}@${branch}`).toThrow(/production branch/);
+    }
+    // Malformed spellings are refused outright.
+    for (const branch of ['main/', 'main.', '.main', 'ma..in', 'feature/x', 'refs/heads/', 'refs/tags/main', 'main@{0}', 'main~1', '']) {
+      expect(() => loadConfig({ ...base, GITHUB_STORE_REPO: 'lyonsv/margin-library', GITHUB_STORE_BRANCH: branch }), JSON.stringify(branch)).toThrow(ConfigError);
+    }
+    // The production variable is canonicalised the same way.
+    expect(() => loadConfig({ ...base, PRODUCTION_GITHUB_STORE: 'lyonsv/margin-library@refs/heads/main', GITHUB_STORE_REPO: 'lyonsv/margin-library', GITHUB_STORE_BRANCH: 'heads/main' })).toThrow(/production branch/);
+    // A real preview branch works, and the store writes to the canonical name.
+    expect(loadConfig({ ...base, GITHUB_STORE_REPO: 'lyonsv/margin-library', GITHUB_STORE_BRANCH: 'refs/heads/preview' })).toBeTruthy();
+    expect(storeConfigFromEnv({ ...base, GITHUB_STORE_REPO: 'lyonsv/margin-library', GITHUB_STORE_BRANCH: 'refs/heads/preview' })).toMatchObject({ branch: 'preview' });
   });
 
   it('store config fails closed when incomplete', () => {

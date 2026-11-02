@@ -85,3 +85,9 @@ Every write is a commit, so the short-lived sign-in values no longer get a file 
 - Requests from the Vercel functions go to `api.github.com`. Writes are slower than Blob was (~300–600 ms per commit), which is acceptable for sync and sign-in.
 - The repo is the source of truth and a full, browsable, versioned backup. It must stay **private**; anyone with read access can read the documents (but not mint tokens: stored token values are HMACs).
 - The owner manages the PAT's expiry. When it expires, every request fails closed until a new token is set (`docs/server-setup.md`).
+
+## Amendments (2026-11-02, after validation of 7227ae0)
+- **Preview guard: canonical branches (validator, MAJOR).** `refs/heads/main`, `heads/main`, `main/` and `main.` got past the old string comparison.
+  - Branch names are now canonicalised for both `GITHUB_STORE_BRANCH` and `PRODUCTION_GITHUB_STORE`: a leading `refs/heads/` or `heads/` is stripped, and only `[A-Za-z0-9._-]` is allowed, with no leading or trailing `.` and no `..` (so no slashes; refused otherwise). The store writes to the canonical name.
+  - Outside production, **any branch equal to the production branch (case-insensitively) is refused, whatever repo is configured**. Repo names can alias through renames and redirects, so the branch alone decides. Every listed bypass is a unit test.
+  - *Option, not needed now:* a separate preview repository with its own PAT would isolate previews completely, even from a misconfigured token.

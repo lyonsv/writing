@@ -98,6 +98,27 @@ export type StoreConfig =
  * repo), `GITHUB_STORE_REPO` (`owner/name`) and `GITHUB_STORE_BRANCH`. Memory is for
  * local dev and tests only and is refused on Vercel (each instance would be empty).
  */
+/**
+ * A branch name in canonical form: a leading `refs/heads/` or `heads/` is
+ * stripped, and only `[A-Za-z0-9._-]` is allowed, with no leading or trailing
+ * `.` and no `..`, so no slashes at all. Every spelling GitHub would resolve to
+ * the same branch (`refs/heads/main`, `heads/main`) becomes one name, and odd
+ * ones (`main/`, `main.`) are refused. Returns null if invalid.
+ */
+export function canonicalBranch(raw: string | undefined): string | null {
+  let b = raw?.trim() ?? '';
+  if (b.startsWith('refs/heads/')) b = b.slice('refs/heads/'.length);
+  else if (b.startsWith('heads/')) b = b.slice('heads/'.length);
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(b) || b.startsWith('.') || b.endsWith('.') || b.includes('..')) return null;
+  return b;
+}
+
+/** `owner/name`, validated; compared case-insensitively (GitHub is). */
+function canonicalRepo(raw: string | undefined): string | null {
+  const r = raw?.trim() ?? '';
+  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r) ? r : null;
+}
+
 export function storeConfigFromEnv(env: Record<string, string | undefined>): StoreConfig {
   const kind = env.MARGIN_STORE?.trim() || (env.GITHUB_STORE_TOKEN ? 'github' : '');
   if (kind === 'memory') {
@@ -106,11 +127,11 @@ export function storeConfigFromEnv(env: Record<string, string | undefined>): Sto
   }
   if (kind !== 'github') throw new ConfigError('MARGIN_STORE must be github or memory');
   const token = env.GITHUB_STORE_TOKEN?.trim();
-  const repo = env.GITHUB_STORE_REPO?.trim();
-  const branch = env.GITHUB_STORE_BRANCH?.trim();
+  const repo = canonicalRepo(env.GITHUB_STORE_REPO);
+  const branch = canonicalBranch(env.GITHUB_STORE_BRANCH);
   if (!token) throw new ConfigError('GITHUB_STORE_TOKEN is not set');
-  if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new ConfigError('GITHUB_STORE_REPO must be owner/name');
-  if (!branch || !/^[A-Za-z0-9._/-]{1,100}$/.test(branch)) throw new ConfigError('GITHUB_STORE_BRANCH is not set');
+  if (!repo) throw new ConfigError('GITHUB_STORE_REPO must be owner/name');
+  if (!branch) throw new ConfigError('GITHUB_STORE_BRANCH must be a plain branch name (letters, digits, . _ -)');
   return { kind: 'github', token, repo, branch };
 }
 
@@ -123,12 +144,17 @@ export function storeConfigFromEnv(env: Record<string, string | undefined>): Sto
  */
 export function assertNotProductionStore(env: Record<string, string | undefined>, store: StoreConfig): void {
   if (!env.VERCEL || env.VERCEL_ENV === 'production') return;
-  const prod = env.PRODUCTION_GITHUB_STORE?.trim().toLowerCase();
-  if (!prod || !/^[^@\s]+\/[^@\s]+@[^@\s]+$/.test(prod)) {
+  const raw = env.PRODUCTION_GITHUB_STORE?.trim() ?? '';
+  const at = raw.lastIndexOf('@');
+  const prodRepo = at > 0 ? canonicalRepo(raw.slice(0, at)) : null;
+  const prodBranch = at > 0 ? canonicalBranch(raw.slice(at + 1)) : null;
+  if (!prodRepo || !prodBranch) {
     throw new ConfigError('PRODUCTION_GITHUB_STORE (owner/repo@branch) is not set (required outside production)');
   }
-  if (store.kind === 'github' && `${store.repo}@${store.branch}`.toLowerCase() === prod) {
-    throw new ConfigError(`refusing to use the production store in the ${env.VERCEL_ENV ?? 'current'} environment`);
+  // Any branch that resolves to the production branch is refused, whatever repo string is
+  // configured: repo names can alias (renames redirect), branch names here are canonical.
+  if (store.kind === 'github' && store.branch.toLowerCase() === prodBranch.toLowerCase()) {
+    throw new ConfigError(`refusing to use the production branch in the ${env.VERCEL_ENV ?? 'current'} environment`);
   }
 }
 
