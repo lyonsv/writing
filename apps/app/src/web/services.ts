@@ -115,12 +115,14 @@ export function webServices(): WebServices {
         void account.status();
         sync.resume();
       } else {
+        // Hidden (another app, tab or the home screen): save, then a `flush` sync
+        // (uploads each path at most every 30 s), then stop polling.
         sync.pause();
-        void flushWorkspace();
+        void flushWorkspace().then(() => sync.syncNow('flush'));
       }
     });
   }
-  // Leaving or hiding the page: get pending text into IndexedDB now.
-  window.addEventListener('pagehide', () => void flushWorkspace());
+  // Leaving the page: get pending text into IndexedDB now, then a `flush` sync (best effort).
+  window.addEventListener('pagehide', () => void flushWorkspace().then(() => sync?.syncNow('flush')));
   return services;
 }

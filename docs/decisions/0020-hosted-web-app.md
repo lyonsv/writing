@@ -59,3 +59,13 @@ ADR 0019 makes the web build the iPhone app. It must be served by the owner's se
 - **Server errors:** with a cached shell, the service worker shows it on a network error, a 5xx, or no answer within 4 s. Only 401/403 delete it. Tested with a failing and a hung server in WebKit.
 - **Staging:** no `*.html` at all may land in `public/`, not just `index.html`.
 - **Migration:** "migrated" is recorded in IndexedDB (`started` → `done`) and never re-runs once done, even if the localStorage backup couldn't be written. A deleted document therefore can't be resurrected by a second migration.
+
+## Amendments (2026-11-02, GitHub commit budget, ADR 0021)
+- The web and iOS clients use the shared `UploadThrottle` and `SyncBackoff` from core, with the same policy as desktop.
+  - **`scheduled`** (the 60 s timer, the change nudge 3 s after edits): each path uploads at most once per 60 s.
+  - **`flush`** (`visibilitychange` → hidden, `pagehide`, iOS background, each after flushing the editor): at most once per 30 s.
+  - **`explicit`** (the Sync button, pull-to-refresh, Settings › Sync Now, Reset Sync State): always.
+  - Held paths keep their base and go in a follow-up run.
+  - A 503/429 pauses syncing for the longer of `Retry-After` and an exponential backoff (30 s doubling, capped at 30 min). Explicit syncs are paused too. The status reads quietly "Sync paused — retrying in N s".
+- **The throttle is per tab, not shared.** It lives in each tab's `NativeSyncService`. The Web Lock still serialises runs across tabs. A shared clock would need another storage round trip on every run for a case that barely exists: the installed iPhone app is a single window. With N tabs open, a path being edited can upload up to N times a minute, and only when its content actually changed.
+- Tests: `apps/app/test/throttle.test.ts` uses simulated time against the real server app. An hour of typing with a pause every 10 s gives ≤ 60 uploads per path; flush runs give ≤ 1 per 30 s; explicit runs always upload; `Retry-After` is respected, with no requests while paused; repeated 503s back off further.

@@ -29,7 +29,8 @@ export function syncLabel(s: SyncStatus | null): string | null {
     case 'syncing':
       return 'Syncing…';
     case 'offline':
-      return 'Offline';
+      // Backing off after the server said "busy" (503 + Retry-After) reads as a pause, not as offline.
+      return s.message?.startsWith('Sync paused') ? s.message : 'Offline';
     case 'error':
       return `Sync error${s.message ? `: ${s.message}` : ''}`;
     case 'idle':

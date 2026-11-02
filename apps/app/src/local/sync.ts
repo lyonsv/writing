@@ -1,5 +1,9 @@
 import {
   HttpSyncRemote,
+  SyncBackoff,
+  SyncBusyError,
+  UploadThrottle,
+  strongerTrigger,
   decodeUtf8,
   encodeUtf8,
   foldPathCase,
@@ -11,6 +15,7 @@ import {
   type SyncLocal,
   type SyncReport,
   type SyncStatus,
+  type UploadTrigger,
 } from '@margin/core';
 
 import type { NativeLibrary } from './library';
@@ -18,10 +23,25 @@ import { sha256Hex } from './library';
 import type { NativeFs } from './nativeFs';
 
 /**
- * iOS sync (ADR 0013 engine, ADR 0015): the same core `runSync` and HTTP client
- * as desktop, over the iOS library. Runs on foreground, a few seconds after
- * edits, on pull-to-refresh, and every `intervalMs` while the app is active.
- * One run at a time; a request during a run queues exactly one more.
+ * iOS and web sync (ADR 0013 engine, ADR 0015/0020): the same core `runSync`
+ * and HTTP client as desktop, over the iOS/IndexedDB library. One run at a
+ * time; a request during a run queues exactly one more, with the strongest
+ * trigger of the requests it merged.
+ *
+ * Commit budget (ADR 0021 amendments; same policy as desktop): every upload is
+ * ~2 commits on the GitHub store, so uploads are throttled per path by trigger:
+ * - `scheduled` (timer, the change nudge a few seconds after edits): ≤ 1 per 60 s;
+ * - `flush` (page hidden / pagehide, iOS background): ≤ 1 per 30 s;
+ * - `explicit` (Sync button, pull-to-refresh, Sync Now, Reset): always.
+ * A held path keeps its base, so nothing is lost; a follow-up run is scheduled
+ * for when it may go. A 503/429 from the server pauses syncing for the longer
+ * of `Retry-After` and an exponential backoff (`SyncBackoff`).
+ *
+ * The throttle and backoff live in this object, i.e. **per tab** on the web
+ * (and per app on iOS). Tabs share a Web Lock, so runs never overlap, but each
+ * tab keeps its own upload clock: with N tabs open a path can go up to N times
+ * a minute while being edited. The installed iPhone app is a single window, so
+ * that's 1 there.
  */
 
 export interface AccountLike {
@@ -41,6 +61,9 @@ export interface NativeSyncOptions {
   debounceMs?: number;
   /** Name of this device in messages. */
   deviceLabel?: string;
+  /** Clock for the throttle and backoff (tests). */
+  now?: () => number;
+  random?: () => number;
   /**
    * Web: a lock shared by all tabs of this library (Web Locks), so only one tab
    * syncs at a time and no tab saves in the middle of another's run. Taken after
@@ -119,10 +142,18 @@ export class NativeSyncService {
   private again = false;
   private debounce: ReturnType<typeof setTimeout> | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
+  private heldTimer: ReturnType<typeof setTimeout> | undefined;
+  private busyTimer: ReturnType<typeof setTimeout> | undefined;
   private listeners = new Set<(s: SyncStatus) => void>();
+  private pendingTrigger: UploadTrigger = 'scheduled';
+  private readonly throttle: UploadThrottle;
+  private readonly backoff: SyncBackoff;
   lastReport: SyncReport | null = null;
 
-  constructor(private readonly options: NativeSyncOptions) {}
+  constructor(private readonly options: NativeSyncOptions) {
+    this.throttle = new UploadThrottle(options.now ?? Date.now);
+    this.backoff = new SyncBackoff(options.now ?? Date.now, options.random ?? Math.random);
+  }
 
   status(): SyncStatus {
     return this.statusValue;
@@ -146,8 +177,8 @@ export class NativeSyncService {
   /** App came to the foreground (or sign-in changed): sync now, and poll while active. */
   resume(intervalMs = 60_000): void {
     clearInterval(this.timer);
-    this.timer = setInterval(() => void this.syncNow(), intervalMs);
-    if (this.signedIn()) void this.syncNow();
+    this.timer = setInterval(() => void this.syncNow('scheduled'), intervalMs);
+    if (this.signedIn()) void this.syncNow('scheduled');
     else if (!this.running) this.setStatus({ state: 'off' });
   }
 
@@ -155,6 +186,8 @@ export class NativeSyncService {
   pause(): void {
     clearInterval(this.timer);
     clearTimeout(this.debounce);
+    clearTimeout(this.heldTimer);
+    clearTimeout(this.busyTimer);
     this.timer = undefined;
   }
 
@@ -162,10 +195,16 @@ export class NativeSyncService {
   nudge(): void {
     if (!this.signedIn()) return;
     clearTimeout(this.debounce);
-    this.debounce = setTimeout(() => void this.syncNow(), this.options.debounceMs ?? 3_000);
+    this.debounce = setTimeout(() => void this.syncNow('scheduled'), this.options.debounceMs ?? 3_000);
   }
 
-  async syncNow(): Promise<SyncStatus> {
+  /**
+   * Runs now (or right after the current run). `trigger` sets how strictly
+   * uploads are throttled; a direct call (the Sync button, pull-to-refresh) is
+   * `explicit`.
+   */
+  async syncNow(trigger: UploadTrigger = 'explicit'): Promise<SyncStatus> {
+    this.pendingTrigger = strongerTrigger(this.pendingTrigger, trigger);
     if (this.running) {
       this.again = true;
       await this.running;
@@ -175,7 +214,9 @@ export class NativeSyncService {
     this.running = (async () => {
       do {
         this.again = false;
-        await this.runOnce();
+        const runTrigger = this.pendingTrigger;
+        this.pendingTrigger = 'scheduled';
+        await this.runOnce(runTrigger);
       } while (this.again);
     })().finally(() => {
       this.running = null;
@@ -191,6 +232,11 @@ export class NativeSyncService {
     while (this.running) await this.running;
     await this.options.fs.remove(this.stateFile(a.serverUrl, a.login));
     return this.syncNow();
+  }
+
+  /** Quiet status while backing off: "Sync paused — retrying in N s" (not an error: nothing is wrong locally). */
+  private pausedStatus(waitMs: number): SyncStatus {
+    return { ...this.statusValue, state: 'offline', message: `Sync paused — retrying in ${Math.ceil(waitMs / 1000)} s` };
   }
 
   private stateFile(serverUrl: string, login: string): string {
@@ -209,9 +255,11 @@ export class NativeSyncService {
     return { v: 1, serverUrl, login, root, base: {} };
   }
 
-  private async runOnce(): Promise<void> {
+  private async runOnce(trigger: UploadTrigger = 'scheduled'): Promise<void> {
     const a = this.options.account.current();
     if (a.state !== 'signed-in' || !a.login) return this.setStatus({ state: 'off' });
+    // Paused after a 503/429: don't add to the load, even for an explicit sync. A retry is scheduled.
+    if (this.backoff.waitMs() > 0) return this.setStatus(this.pausedStatus(this.backoff.waitMs()));
     const previous = this.statusValue;
     this.setStatus({ ...previous, state: 'syncing' });
     if (this.options.beforeSync && !(await this.options.beforeSync())) {
@@ -234,10 +282,16 @@ export class NativeSyncService {
           base,
           saveBase: persist,
           hash: sha256Hex,
+          allowUpload: (p) => this.throttle.allows(p, trigger),
+          onUploaded: (p) => this.throttle.uploaded(p),
         }),
       );
       await persist();
+      this.backoff.succeed();
       this.lastReport = report;
+      // Held uploads go as soon as the throttle allows (at most a minute later).
+      clearTimeout(this.heldTimer);
+      if (report.held.length) this.heldTimer = setTimeout(() => void this.syncNow('scheduled'), this.throttle.dueIn(report.held) + 50);
       if (report.stale.length) {
         this.setStatus({
           state: 'error',
@@ -254,7 +308,12 @@ export class NativeSyncService {
     } catch (error) {
       await persist().catch(() => undefined);
       const name = (error as Error).name;
-      if (name === 'AccountError') {
+      if (error instanceof SyncBusyError) {
+        const wait = this.backoff.fail(error.retryAfterMs);
+        clearTimeout(this.busyTimer);
+        this.busyTimer = setTimeout(() => void this.syncNow('scheduled'), wait + 50);
+        this.setStatus(this.pausedStatus(wait));
+      } else if (name === 'AccountError') {
         this.setStatus(this.signedIn() ? { state: 'error', message: (error as Error).message } : { state: 'off' });
       } else if (error instanceof TypeError || name === 'AbortError' || name === 'TimeoutError') {
         this.setStatus({ ...previous, state: 'offline', message: 'Can’t reach the server' });

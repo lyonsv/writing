@@ -110,6 +110,8 @@ export function startLifecycle(): void {
         })
         .then(() => library.idle())
         .then(() => settingsStore.flushed())
+        // Then a `flush` sync (≤ 1 upload per path per 30 s), in the seconds iOS allows.
+        .then(() => void sync.syncNow('flush'))
         .catch((e: unknown) => console.error('Margin: flush on background failed', e));
     }
   });
