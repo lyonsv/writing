@@ -123,22 +123,38 @@ export const focusPlugin = ViewPlugin.fromClass(FocusPlugin, { decorations: (p) 
  * when the caret is off-centre, which keeps typing cheap even in 20 MB
  * documents (dispatching a `scrollIntoView` effect per keystroke cost ~50 ms
  * there). If the caret isn't rendered (a big jump), fall back to a one-off
- * centre `scrollIntoView`. Pointer selections are left alone so click-dragging
- * doesn't move the page under the mouse.
+ * centre `scrollIntoView`. Pointer selections don't scroll while the mouse is
+ * down (the page mustn't move under a drag); the caret line is re-centred
+ * smoothly on mouseup instead, or instantly with prefers-reduced-motion.
  */
 class TypewriterPlugin {
   private fallbackPending = false;
+  private pointerPending = false;
+  private readonly onMouseUp = () => {
+    if (!this.pointerPending) return;
+    this.pointerPending = false;
+    if (this.view.state.facet(typewriterEnabled)) this.recentre(true);
+  };
 
-  constructor(private readonly view: EditorView) {}
+  constructor(private readonly view: EditorView) {
+    view.dom.ownerDocument.addEventListener('mouseup', this.onMouseUp);
+  }
+
+  destroy(): void {
+    this.view.dom.ownerDocument.removeEventListener('mouseup', this.onMouseUp);
+  }
 
   update(u: ViewUpdate): void {
     if (!u.state.facet(typewriterEnabled)) return;
     if (!u.selectionSet && !u.docChanged) return;
-    if (u.transactions.some((tr) => tr.isUserEvent('select.pointer'))) return;
+    if (u.transactions.some((tr) => tr.isUserEvent('select.pointer'))) {
+      this.pointerPending = true;
+      return;
+    }
     this.recentre();
   }
 
-  recentre(): void {
+  recentre(smooth = false): void {
     this.view.requestMeasure({
       key: this,
       read: (view) => {
@@ -159,7 +175,14 @@ class TypewriterPlugin {
           }, 0);
           return;
         }
-        if (Math.abs(delta) > 1) view.scrollDOM.scrollTop += delta;
+        if (Math.abs(delta) <= 1) return;
+        const reduce =
+          typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+        if (smooth && !reduce) {
+          view.scrollDOM.scrollTo({ top: view.scrollDOM.scrollTop + delta, behavior: 'smooth' });
+        } else {
+          view.scrollDOM.scrollTop += delta;
+        }
       },
     });
   }

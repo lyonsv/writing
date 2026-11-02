@@ -276,3 +276,41 @@ test('20 MB: saves after typing pauses do not block the editor', async () => {
   expect(longTasks.length).toBeLessThanOrEqual(3);
   await quitAndWait(app);
 });
+
+test('typewriter: a click re-centres the caret line after mouseup (smooth, or instant with reduced motion)', async () => {
+  const lines = Array.from({ length: 400 }, (_, i) => `Line ${i}. Some text.`);
+  const { app, page } = await open(`# Typewriter\n\n${lines.join('\n')}\n`);
+  await clickMenu(app, 'typewriter');
+  await page.locator('.cm-content').click();
+  for (let i = 0; i < 60; i++) await page.keyboard.press('ArrowDown');
+
+  const caretOffset = () =>
+    page.evaluate(() => {
+      const scroller = document.querySelector('.cm-scroller') as HTMLElement;
+      const caret = document.querySelector('.cm-cursor') as HTMLElement;
+      const rect = caret.getBoundingClientRect();
+      const box = scroller.getBoundingClientRect();
+      return rect.top + rect.height / 2 - (box.top + box.height / 2);
+    });
+  const clickLineAt = async (fraction: number) => {
+    const box = (await page.locator('.cm-scroller').boundingBox())!;
+    const y = box.y + box.height * fraction;
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    await page.waitForTimeout(150);
+    // While the button is down nothing scrolls (no jumping under a drag)…
+    const during = await caretOffset();
+    expect(Math.abs(during)).toBeGreaterThan(80);
+    await page.mouse.up();
+  };
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await clickLineAt(0.85);
+  await expect.poll(async () => Math.abs(await caretOffset()), { timeout: 3000 }).toBeLessThan(20);
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await clickLineAt(0.15);
+  await page.waitForTimeout(80); // instant: no animation to wait for
+  expect(Math.abs(await caretOffset())).toBeLessThan(20);
+  await quitAndWait(app);
+});
