@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -23,7 +23,7 @@ function stage(files: Record<string, string>) {
 }
 
 describe('stage-web', () => {
-  it('puts the shell in web/ and no HTML at all in public/', () => {
+  it('puts the shell in web/index.html and the static files, never HTML, in web/assets.json', () => {
     const out = stage({
       'index.html': '<html>shell</html>',
       'other.html': '<html>another page</html>',
@@ -31,9 +31,11 @@ describe('stage-web', () => {
       '_expo/static/js/web/entry.js': 'js',
       'manifest.webmanifest': '{}',
     });
-    expect(existsSync(path.join(out, 'web/index.html'))).toBe(true);
-    const pub = readdirSync(path.join(out, 'public'), { recursive: true }).map(String);
-    expect(pub.filter((f) => /\.html?$/i.test(f))).toEqual([]);
-    expect(pub).toContain(path.join('_expo', 'static', 'js', 'web', 'entry.js'));
+    expect(readFileSync(path.join(out, 'web/index.html'), 'utf8')).toBe('<html>shell</html>');
+    const assets = JSON.parse(readFileSync(path.join(out, 'web/assets.json'), 'utf8')) as Record<string, string>;
+    expect(Object.keys(assets).sort()).toEqual(['/_expo/static/js/web/entry.js', '/manifest.webmanifest', '/margin-assets.json']);
+    expect(JSON.parse(Buffer.from(assets['/margin-assets.json']!, 'base64').toString())).toEqual({ files: ['/_expo/static/js/web/entry.js', '/manifest.webmanifest'] });
+    expect(Buffer.from(assets['/_expo/static/js/web/entry.js']!, 'base64').toString()).toBe('js');
+    expect(existsSync(path.join(out, 'public'))).toBe(false); // Vercel wouldn't deploy it anyway
   });
 });

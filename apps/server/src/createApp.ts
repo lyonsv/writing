@@ -75,8 +75,8 @@ export interface AppDeps {
   log?: Logger;
   /**
    * The hosted web app (ADR 0020). `shell` returns the app's index.html (null
-   * if there's no web build). `asset` serves static files for local dev and
-   * tests; on Vercel the CDN serves them from `public/` and never reaches here.
+   * if there's no web build). `asset` serves the static files (export minus
+   * HTML), publicly; on Vercel from the staged web/assets.json, cached by the CDN.
    */
   web?: {
     shell: () => Promise<string | null>;
@@ -217,7 +217,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
     return bodyLimit({ maxSize, onError: (cx) => cx.json({ error: 'payload_too_large' }, 413) })(c, next);
   });
 
-  // --- Static files of the web app (local dev and tests only; public, no user data).
+  // --- Static files of the web app (public, no user data; never HTML), before the auth gate.
+  // On Vercel too: files the build puts in public/ aren't deployed (ADR 0020 amendments).
   if (deps.web?.asset) {
     const asset = deps.web.asset;
     app.use('*', async (c, next) => {
@@ -227,6 +228,9 @@ export function createApp(deps: AppDeps): Hono<Env> {
       return c.body(file.body as unknown as ArrayBuffer, 200, {
         'Content-Type': file.type,
         'Cache-Control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        // Vercel's CDN caches these function responses (per deployment): content-hashed
+        // files for a year, the rest (icons, manifest, sw.js) for 5 minutes.
+        'CDN-Cache-Control': file.immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=300',
         // A service worker's own fetches obey its CSP: let it reach this origin.
         ...(c.req.path === '/sw.js' ? { 'Content-Security-Policy': "default-src 'self'" } : {}),
       });

@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build:web": "pnpm --filter @margin/app export:web && node scripts/stage-web.mjs",
-    "verify:github": "tsx scripts/verify-github.ts"
+    "verify:github": "tsx scripts/verify-github.ts",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "hono": "4.13.16"

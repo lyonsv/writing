@@ -4,9 +4,9 @@ import path from 'node:path';
 import type { WebAsset } from './createApp.js';
 
 /**
- * The web app's files from a directory (an Expo web export), for `pnpm
- * dev:server` and tests (ADR 0020). On Vercel the CDN serves the static files
- * from `public/`, and `server.ts` reads only the shell.
+ * The web app's files (ADR 0020): from a directory (an Expo web export) for
+ * `pnpm dev:server` and tests, or from the staged `web/assets.json` on Vercel
+ * (`scripts/stage-web.mjs`), where the function serves them and the CDN caches them.
  */
 const TYPES: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
@@ -31,6 +31,38 @@ export async function readShell(file: string | URL): Promise<string | null> {
   }
 }
 
+const typeOf = (p: string) => TYPES[path.extname(p)] ?? 'application/octet-stream';
+const isImmutable = (p: string) => p.startsWith('/_expo/static/') || p.startsWith('/assets/');
+
+/**
+ * Static files from the staged `web/assets.json` (path → base64), read once.
+ * Never HTML (the staging refuses it; checked again here).
+ */
+export function assetsFromJson(file: string | URL): (pathname: string) => Promise<WebAsset | null> {
+  let table: Promise<Map<string, Uint8Array>> | undefined;
+  const load = async () => {
+    const out = new Map<string, Uint8Array>();
+    try {
+      const json = JSON.parse(await readFile(file, 'utf8')) as Record<string, string>;
+      for (const [p, b64] of Object.entries(json)) if (!/\.html?$/i.test(p)) out.set(p, new Uint8Array(Buffer.from(b64, 'base64')));
+    } catch {
+      /* no web build staged: API only */
+    }
+    return out;
+  };
+  return async (pathname) => {
+    table ??= load();
+    let rel: string;
+    try {
+      rel = decodeURIComponent(pathname);
+    } catch {
+      return null;
+    }
+    const body = (await table).get(rel);
+    return body ? { body, type: typeOf(rel), immutable: isImmutable(rel) } : null;
+  };
+}
+
 export function webDir(dir: string) {
   const root = path.resolve(dir);
   return {
@@ -49,8 +81,8 @@ export function webDir(dir: string) {
         if (!(await stat(file)).isFile()) return null;
         return {
           body: new Uint8Array(await readFile(file)),
-          type: TYPES[path.extname(file)] ?? 'application/octet-stream',
-          immutable: rel.startsWith('/_expo/static/') || rel.startsWith('/assets/'),
+          type: typeOf(file),
+          immutable: isImmutable(rel),
         };
       } catch {
         return null;

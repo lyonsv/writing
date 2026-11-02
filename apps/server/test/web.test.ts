@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { SHELL_CSP } from '../src/createApp';
-import { webDir } from '../src/webFiles';
+import { assetsFromJson, webDir } from '../src/webFiles';
 import { Jar, OWNER, setup } from './helpers';
 
 /** The hosted web app on the API's origin (ADR 0020). */
@@ -92,5 +92,28 @@ describe('hosted web app', () => {
   it('without a web build the server is API-only (no catch-all)', async () => {
     const h = setup();
     expect((await h.req('/')).headers.get('Content-Type')).toContain('application/json');
+  });
+
+  it('on Vercel: static files come from the staged assets.json, publicly, CDN-cacheable; never HTML', async () => {
+    const file = path.join(dir, 'assets.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        '/_expo/static/js/web/entry-0123456789abcdef.js': Buffer.from('console.log(1)').toString('base64'),
+        '/manifest.webmanifest': Buffer.from('{}').toString('base64'),
+        '/sneaky.html': Buffer.from('<html>').toString('base64'),
+      }),
+    );
+    const h = setup({ web: { shell: async () => '<html><head></head><body><div id="root"></div></body></html>', asset: assetsFromJson(file) } });
+    const js = await h.req('/_expo/static/js/web/entry-0123456789abcdef.js');
+    expect(js.status).toBe(200);
+    expect(await js.text()).toBe('console.log(1)');
+    expect(js.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+    expect(js.headers.get('CDN-Cache-Control')).toBe('public, max-age=31536000, immutable');
+    const manifest = await h.req('/manifest.webmanifest');
+    expect(manifest.headers.get('Content-Type')).toBe('application/manifest+json');
+    expect(manifest.headers.get('CDN-Cache-Control')).toBe('public, max-age=300');
+    expect((await h.req('/sneaky.html')).status).toBe(401); // HTML is never served as a static file
+    expect((await h.req('/')).status).toBe(401);
   });
 });
