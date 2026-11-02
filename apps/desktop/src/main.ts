@@ -82,6 +82,25 @@ async function flushForSync(): Promise<boolean> {
   return outcomes.every((o) => o.clean && !('unresponsive' in o));
 }
 
+/** Margin › Reset Sync State for This Folder… (docs/sync-recovery.md). Never deletes local text. */
+async function confirmResetSync(): Promise<void> {
+  const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const options = {
+    type: 'warning' as const,
+    message: 'Reset sync state for this folder?',
+    detail:
+      'Margin forgets what this folder last agreed with the server and compares everything again. ' +
+      'No document is deleted. Documents only on this Mac are uploaded, documents only on the server are downloaded, ' +
+      'and where the two differ your version is kept as a “(conflict …)” copy next to the server’s.',
+    buttons: ['Cancel', 'Reset and Sync'],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  if (response === 1) await sync.resetBase();
+}
+
 function createSync(): SyncService {
   return new SyncService({
     library: () => library,
@@ -129,8 +148,10 @@ function updateAccountMenu(): void {
   const signOut = menu?.getMenuItemById('sign-out');
   if (signIn) signIn.enabled = state !== 'signed-in';
   if (signOut) signOut.enabled = state === 'signed-in';
-  const syncNow = menu?.getMenuItemById('sync-now');
-  if (syncNow) syncNow.enabled = state === 'signed-in';
+  for (const id of ['sync-now', 'reset-sync']) {
+    const item = menu?.getMenuItemById(id);
+    if (item) item.enabled = state === 'signed-in';
+  }
 }
 
 /** Account errors carry user-facing text; anything else gets a generic message (no internals over IPC). */
@@ -553,6 +574,7 @@ function buildMenu(): void {
         { id: 'sign-out', label: 'Sign Out', click: () => void account.signOut().catch(() => undefined) },
         { id: 'account', label: 'Account and Devices…', click: () => sendCommand('account') },
         { id: 'sync-now', label: 'Sync Now', accelerator: 'CommandOrControl+Alt+S', click: () => void sync.syncNow() },
+        { id: 'reset-sync', label: 'Reset Sync State for This Folder…', click: () => void confirmResetSync() },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },

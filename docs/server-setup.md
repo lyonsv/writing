@@ -67,7 +67,8 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
 |---|---|
 | Project | `margin-sync` (scope `vincent-lyons-projects-fe5e48fc`): Root Directory `apps/server`, framework Hono, Node 24.x, Fluid Compute, region iad1 |
 | Production alias | `https://margin-sync.vercel.app` |
-| Blob store | `margin-store` (`store_wIWFdLVUkOUhtb05`, **private**, iad1), connected for Production + Preview → `BLOB_READ_WRITE_TOKEN` |
+| Blob stores | `margin-store` (`store_wIWFdLVUkOUhtb05`, **private**, iad1): **Production only**. `margin-store-preview` (`store_RCqGVGmwoZxS2m4D`, private): **Preview + Development**. Each injects its own `BLOB_READ_WRITE_TOKEN` |
+| `PRODUCTION_BLOB_STORE_ID` | `store_wIWFdLVUkOUhtb05` in all environments: previews refuse to run against the production store (ADR 0014) |
 | `AUTH_SECRET` | random, sensitive, **different** for Production and Preview (never displayed) |
 | `ALLOWED_GITHUB_LOGINS` | `lyonsv:2531232` (Production, Preview) |
 | `PUBLIC_URL` | `https://margin-sync.vercel.app` (Production). Preview: unset, derived from `VERCEL_URL` |
@@ -90,7 +91,9 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
    ```
 4. Check it: `curl -s https://margin-sync.vercel.app/api/me` → `401 {"error":"unauthorized"}`. Then, in Margin, set `"serverUrl": "https://margin-sync.vercel.app"` in `~/Library/Application Support/Margin/settings.json` (or `MARGIN_SERVER_URL`) and use Margin › Sign In….
 
-**Checking real-Blob behaviour** (no deploy needed): `pnpm --filter @margin/server verify:blob`. It pulls the Preview env into the git-ignored `apps/server/.env.blob.local`, runs every storage assumption against the real store under a throwaway prefix (10 parallel writers for the CAS checks), and deletes what it wrote. Expect `19/19 checks passed`.
+**Sync errors** ("the server's copy … is older than this Mac's"): see [sync-recovery.md](sync-recovery.md).
+
+**Checking real-Blob behaviour** (no deploy needed): `pnpm --filter @margin/server verify:blob`. It pulls the Preview env (so it uses the **preview** store, never production) into the git-ignored `apps/server/.env.blob.local`, runs every storage assumption against the real store under a throwaway prefix (10 parallel writers for the CAS checks), and deletes what it wrote. Expect `19/19 checks passed`.
 
 ## Revoking a device
 - **From the app:** Margin › Account and Devices… › **Revoke** (click twice to confirm). Revoking the device you're on signs it out. Margin › Sign Out revokes the current device.

@@ -272,6 +272,35 @@ describe('two desktop clients against the local server', () => {
     expect(await converge(a, b)).toEqual({ 'q.md': 'bbbb' });
   });
 
+  it('Reset Sync State recovers from a rollback without deleting any local text', async () => {
+    const a = await device('A');
+    write(a, 'early.md', 'v1');
+    await a.sync.syncNow();
+    const backup = (await server.store.get('sync/manifest.json'))!.value;
+    write(a, 'early.md', 'v2');
+    write(a, 'late.md', 'written after the backup');
+    await a.sync.syncNow();
+    await server.store.put('sync/manifest.json', backup); // the rollback
+    await a.sync.syncNow();
+    expect(a.sync.status().state).toBe('error');
+
+    const before = snapshot(a);
+    await a.sync.resetBase();
+    const after = snapshot(a);
+    // Nothing was deleted. Where Mac and server differ (early.md: v2 here, v1 in the
+    // restored backup) this Mac's text went to a conflict copy and the server's took the name.
+    expect(Object.keys(after)).toEqual(expect.arrayContaining(Object.keys(before)));
+    expect(after['late.md']).toBe('written after the backup');
+    expect(after['early.md']).toBe('v1');
+    expect(after['early (conflict 2026-11-02 1200).md']).toBe('v2');
+    expect(a.trashed).toEqual([]);
+    expect(a.sync.status().state).toBe('idle');
+    // And the server has every text again, so another device converges on it.
+    const b = await device('B');
+    await converge(a, b);
+    expect(Object.values(snapshot(b))).toEqual(expect.arrayContaining(['v2', 'written after the backup']));
+  });
+
   it('keeps going past documents the server refuses, and reports them', async () => {
     const a = await device('A');
     write(a, 'big.md', 'x'.repeat(4 * 1024 * 1024 + 10));

@@ -42,7 +42,7 @@ Keyboard shortcuts (desktop menus; bound in the editor itself elsewhere): New Do
 
 Desktop env overrides (see `.env.example`): `MARGIN_LIBRARY_DIR` (default `~/Documents/Margin`), `MARGIN_USER_DATA_DIR`, `MARGIN_WEB_DIR`, `MARGIN_DEV_SERVER_URL` (dev mode), `MARGIN_SERVER_URL` (sign-in server, default `http://127.0.0.1:3000`), `MARGIN_SHOW_INACTIVE` (don't steal OS focus; used by tests), `MARGIN_TEST_NO_HARDLINKS`, `MARGIN_TEST_LIST_LIMIT` (tests). Server env vars: `.env.example` and `docs/server-setup.md`. **Never point a test or dev run at `~/Documents/Margin`**: e2e uses temp folders via `MARGIN_LIBRARY_DIR` / `MARGIN_USER_DATA_DIR`.
 
-Account menu (app menu): Sign In… · Sign Out · Account and Devices… · Sync Now ⌥⌘S (ADRs 0010–0013). Sidebar keyboard: ↑/↓ · →/← expand/collapse · Enter/Space open · F2 rename (ADR 0009 amendments).
+Account menu (app menu): Sign In… · Sign Out · Account and Devices… · Sync Now ⌥⌘S · Reset Sync State for This Folder… (ADRs 0010–0014, `docs/sync-recovery.md`). Previews use their own Blob store; never point a preview at the production store (the server refuses). Sidebar keyboard: ↑/↓ · →/← expand/collapse · Enter/Space open · F2 rename (ADR 0009 amendments).
 
 Add Expo packages with `pnpm --filter @margin/app exec expo install <pkg>` so versions match SDK 58. Check with `npx expo-doctor@latest` in `apps/app`.
 

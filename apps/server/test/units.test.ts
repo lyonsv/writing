@@ -42,6 +42,24 @@ describe('config', () => {
     }
   });
 
+  it('refuses the production Blob store outside production (ADR 0014)', () => {
+    const PROD = 'store_ProdStore123';
+    const prodToken = 'vercel_blob_rw_ProdStore123_secretsecret';
+    const previewToken = 'vercel_blob_rw_PreviewStore456_secretsecret';
+    const base = { ...ENV, VERCEL: '1', PRODUCTION_BLOB_STORE_ID: PROD };
+    // Preview pointing at the production store (by token or by OIDC store id): refused.
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview', BLOB_READ_WRITE_TOKEN: prodToken })).toThrow(/production Blob store/);
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'development', BLOB_STORE_ID: 'store_prodstore123' })).toThrow(/production Blob store/);
+    // Preview with its own store: fine.
+    expect(loadConfig({ ...base, VERCEL_ENV: 'preview', BLOB_READ_WRITE_TOKEN: previewToken }).publicUrl.origin).toBe('https://margin.example.com');
+    // Can't tell which store, or no production id configured: refused (fail closed).
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview' })).toThrow(/identify/);
+    expect(() => loadConfig({ ...ENV, VERCEL: '1', VERCEL_ENV: 'preview', BLOB_READ_WRITE_TOKEN: previewToken })).toThrow(/PRODUCTION_BLOB_STORE_ID/);
+    // Production itself and local runs (no VERCEL) are unaffected.
+    expect(loadConfig({ ...base, VERCEL_ENV: 'production', BLOB_READ_WRITE_TOKEN: prodToken })).toBeTruthy();
+    expect(loadConfig({ ...ENV, BLOB_READ_WRITE_TOKEN: prodToken })).toBeTruthy();
+  });
+
   it('derives PUBLIC_URL from VERCEL_URL on previews only', () => {
     const { PUBLIC_URL: _drop, ...rest } = ENV;
     expect(loadConfig({ ...rest, VERCEL_ENV: 'preview', VERCEL_URL: 'margin-sync-abc123.vercel.app' }).publicUrl.origin).toBe(

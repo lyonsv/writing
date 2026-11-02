@@ -226,6 +226,24 @@ export class SyncService {
     return this.statusValue;
   }
 
+  /**
+   * "Reset Sync State for This Folder": forgets what this library and this
+   * account last agreed with the server, then syncs. It never deletes local
+   * text: with no base the engine can't plan a local delete or trash anything;
+   * identical files are adopted; local-only files are uploaded; and where this
+   * Mac and the server differ, this Mac's version is saved as a conflict copy
+   * before the server's version takes the name. That's the recovery for "the
+   * server's copy is older than this Mac's" (docs/sync-recovery.md).
+   */
+  async resetBase(): Promise<SyncStatus> {
+    const account = this.options.account.status();
+    if (account.state !== 'signed-in') return this.statusValue;
+    while (this.running) await this.running;
+    const file = this.stateFile(account.serverUrl, account.login, this.options.library().root);
+    await fs.rm(file, { force: true });
+    return this.syncNow();
+  }
+
   private stateFile(serverUrl: string, login: string, root: string): string {
     const id = createHash('sha256').update(`${serverUrl}\n${login}\n${root}`).digest('hex').slice(0, 24);
     return path.join(this.options.stateDir, `${id}.json`);

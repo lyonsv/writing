@@ -81,7 +81,32 @@ function publicUrlFrom(env: Record<string, string | undefined>): string {
   throw new ConfigError('PUBLIC_URL is not set');
 }
 
+/** The Blob store id a deployment's credentials point at, without the `store_` prefix (lowercase). */
+export function blobStoreIdFromEnv(env: Record<string, string | undefined>): string | undefined {
+  const explicit = env.BLOB_STORE_ID?.trim();
+  if (explicit) return explicit.replace(/^store_/i, '').toLowerCase();
+  // Read-write tokens embed the store id: vercel_blob_rw_<storeId>_<secret>.
+  const m = /^vercel_blob_rw_([A-Za-z0-9]+)_/.exec(env.BLOB_READ_WRITE_TOKEN?.trim() ?? '');
+  return m ? m[1]!.toLowerCase() : undefined;
+}
+
+/**
+ * Previews and development must never touch the production Blob store (ADR
+ * 0014): untested branch code could corrupt real documents. On Vercel, outside
+ * production, we require PRODUCTION_BLOB_STORE_ID and refuse to run if our own
+ * Blob credentials point at that store (or can't be identified).
+ */
+export function assertNotProductionStore(env: Record<string, string | undefined>): void {
+  if (!env.VERCEL || env.VERCEL_ENV === 'production') return;
+  const prod = env.PRODUCTION_BLOB_STORE_ID?.trim().replace(/^store_/i, '').toLowerCase();
+  if (!prod) throw new ConfigError('PRODUCTION_BLOB_STORE_ID is not set (required outside production)');
+  const mine = blobStoreIdFromEnv(env);
+  if (!mine) throw new ConfigError('cannot identify this deployment’s Blob store');
+  if (mine === prod) throw new ConfigError(`refusing to use the production Blob store in ${env.VERCEL_ENV ?? 'this'} environment`);
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+  assertNotProductionStore(env);
   const publicUrl = httpsOrLoopback(publicUrlFrom(env), 'PUBLIC_URL');
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username) {
     throw new ConfigError('PUBLIC_URL must be an origin only, e.g. https://margin.example.com');
