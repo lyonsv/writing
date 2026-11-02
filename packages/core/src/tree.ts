@@ -4,7 +4,7 @@
  */
 import { conflictTimestamp } from './conflict';
 import type { DocumentEntry, FolderEntry, LibraryEntry } from './document';
-import { MARKDOWN_EXTENSION, basename, dirname, displayName, isMarkdownPath, isWithin, joinDocPath } from './paths';
+import { MARKDOWN_EXTENSION, basename, dirname, displayName, isMarkdownPath, isWithin, joinDocPath, utf8Length } from './paths';
 
 export type LibrarySort = 'name' | 'modified';
 
@@ -100,6 +100,14 @@ export function ancestorsOf(path: string): string[] {
 // ------------------------------------------------------------------ names
 
 /**
+ * Longest name a user may type, in UTF-8 bytes. The filesystem allows 255 per
+ * name; we keep room for `.md` (3), a conflict-copy suffix
+ * (` (conflict YYYY-MM-DD HHMM NN)`, ~31) and a uniqueness counter (` NN`),
+ * so every name we derive from it still fits.
+ */
+export const MAX_NAME_BYTES = 200;
+
+/**
  * Validates a single file or folder name typed by the user. Returns an error
  * message, or null if the name is fine.
  */
@@ -109,7 +117,7 @@ export function validateName(name: string): string | null {
   if (trimmed !== name) return 'Name can’t start or end with spaces.';
   if (name.startsWith('.')) return 'Name can’t start with a dot.';
   if (/[/\\:\0]/.test(name)) return 'Name can’t contain / \\ or :';
-  if (name.length > 200) return 'Name is too long.';
+  if (utf8Length(name) > MAX_NAME_BYTES) return 'Name is too long.';
   return null;
 }
 

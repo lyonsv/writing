@@ -90,9 +90,19 @@ async function fsyncDir(dir: string): Promise<void> {
   }
 }
 
-/** Writes `content` to a fresh temp file next to `target` and fsyncs it. Returns the temp path. */
+/**
+ * Writes `content` to a fresh temp file next to `target` and fsyncs it. Returns the temp path.
+ * The temp name is short and fixed-length (`.margin-<12 hex>.tmp`, 24 bytes) rather than
+ * derived from the target's name: a document whose name is near the 255-byte limit would
+ * otherwise get a temp name the filesystem refuses (ENAMETOOLONG), and could never be saved.
+ * Same directory, so the final rename stays atomic. Dot-prefixed, so listings and watchers skip it.
+ */
+export function tempPathFor(target: string): string {
+  return path.join(path.dirname(target), `.margin-${randomBytes(6).toString('hex')}.tmp`);
+}
+
 async function writeTemp(target: string, content: string): Promise<string> {
-  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${randomBytes(6).toString('hex')}.tmp`);
+  const tmp = tempPathFor(target);
   const handle = await fs.open(tmp, 'wx', 0o644);
   try {
     await handle.writeFile(content, 'utf8');

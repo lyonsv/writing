@@ -307,3 +307,34 @@ test('Choose Documents Folder… saves first, switches libraries and remembers t
   expect(JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8')).libraryDir).toBe(other);
   await quitAndWait(app);
 });
+
+test('long and multibyte names: documents near the 255-byte limit save; names are limited in bytes', async () => {
+  const long = `${'L'.repeat(240)}.md`; // 243 bytes
+  const multi = `${'é'.repeat(120)}.md`; // 123 characters, 243 bytes
+  const { lib, app, page } = await setup({ [long]: 'long', [multi]: 'multi', 'short.md': 's' });
+  await showSidebar(app, page);
+
+  for (const name of [long, multi]) {
+    await openViaSidebar(page, name);
+    await page.locator('.cm-content').click();
+    await page.keyboard.press('End');
+    await page.keyboard.type(' edited');
+    await expect.poll(() => read(path.join(lib, name)), { timeout: 10_000 }).toMatch(/ edited$/);
+    await expect(page.getByTestId('save-status')).toHaveCount(0); // never "Not saved — retrying"
+  }
+  expect(readdirSync(lib).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+
+  // Renaming: the limit is in UTF-8 bytes, not characters.
+  await stubContextMenuChoice(app, 'Rename…');
+  await row(page, 'short.md').click({ button: 'right' });
+  const input = page.getByTestId('library-rename-input');
+  await input.fill('日'.repeat(67)); // 67 characters, 201 bytes
+  await input.press('Enter');
+  await expect(page.getByTestId('library-error')).toContainText('too long');
+  const ok = '日'.repeat(66); // 198 bytes
+  await input.fill(ok);
+  await input.press('Enter');
+  await expect(row(page, `${ok}.md`)).toBeVisible();
+  expect(read(path.join(lib, `${ok}.md`))).toBe('s');
+  await quitAndWait(app);
+});

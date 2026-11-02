@@ -295,3 +295,41 @@ describe('FileSystemLibrary tree operations', () => {
     expect(readFileSync(path.join(root, 'f/x.md'), 'utf8')).toBe('again');
   });
 });
+
+describe('FileSystemLibrary long and multibyte names', () => {
+  // 'L'×240 + '.md' = 243 bytes; 'é'×120 + '.md' = 243 bytes (but only 123 characters).
+  for (const stem of ['L'.repeat(240), 'é'.repeat(120), '日'.repeat(80)]) {
+    it(`saves, creates and conflict-copies ${stem.length}-char ${Buffer.byteLength(stem)}-byte names`, async () => {
+      const when = new Date(2026, 10, 2, 14, 30);
+      const l = new FileSystemLibrary(root, { now: () => when });
+      await l.init();
+      const name = `${stem}.md`;
+      writeFileSync(path.join(root, name), 'v1');
+      await l.open(name);
+      expect(await l.save(name, 'v2')).toEqual({ status: 'saved', path: name });
+      expect(readFileSync(path.join(root, name), 'utf8')).toBe('v2');
+
+      // External edit, then our save: the conflict copy's name must fit too.
+      writeFileSync(path.join(root, name), 'theirs');
+      const result = await l.save(name, 'ours');
+      expect(result.status).toBe('conflict');
+      const copy = (result as { conflictPath: string }).conflictPath;
+      expect(Buffer.byteLength(copy)).toBeLessThanOrEqual(255);
+      expect(readFileSync(path.join(root, copy), 'utf8')).toBe('ours');
+
+      // Exclusive create of a long name, in a subfolder.
+      await l.createFolder('sub');
+      await l.createDocument(`sub/${name}`);
+      await l.open(`sub/${name}`);
+      expect((await l.save(`sub/${name}`, 'x')).status).toBe('saved');
+      expect(readdirSync(root).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    });
+  }
+
+  it('uses short temp names independent of the target name', async () => {
+    const { tempPathFor } = await import('../src/library');
+    const tmp = tempPathFor(path.join(root, `${'L'.repeat(250)}.md`));
+    expect(path.dirname(tmp)).toBe(root);
+    expect(path.basename(tmp)).toMatch(/^\.margin-[0-9a-f]{12}\.tmp$/);
+  });
+});

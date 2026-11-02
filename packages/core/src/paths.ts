@@ -85,3 +85,32 @@ export function isWithin(parent: string, child: string): boolean {
 export function isHiddenPath(path: string): boolean {
   return path.split('/').some((segment) => segment.startsWith('.'));
 }
+
+/**
+ * Filesystems limit a single name to 255 **bytes** of UTF-8 (APFS, ext4 and
+ * most others), not 255 characters: `é` is 2 bytes, most CJK 3, emoji 4.
+ */
+export const MAX_FILENAME_BYTES = 255;
+
+/** UTF-8 length of `s`, without TextEncoder (core has no DOM/Node globals). */
+export function utf8Length(s: string): number {
+  let n = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    n += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+  }
+  return n;
+}
+
+/** The longest prefix of `s` (whole code points) that fits in `maxBytes` of UTF-8. */
+export function truncateUtf8(s: string, maxBytes: number): string {
+  let n = 0;
+  let out = '';
+  for (const ch of s) {
+    const len = utf8Length(ch);
+    if (n + len > maxBytes) break;
+    n += len;
+    out += ch;
+  }
+  return out;
+}

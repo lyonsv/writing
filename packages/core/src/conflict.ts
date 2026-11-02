@@ -1,4 +1,4 @@
-import { MARKDOWN_EXTENSION, dirname, basename, isMarkdownPath, joinDocPath } from './paths';
+import { MARKDOWN_EXTENSION, MAX_FILENAME_BYTES, basename, dirname, isMarkdownPath, joinDocPath, truncateUtf8, utf8Length } from './paths';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -19,7 +19,11 @@ export function conflictCopyPath(path: string, date: Date, attempt = 1): string 
   const name = basename(path);
   const stem = isMarkdownPath(name) ? name.slice(0, -MARKDOWN_EXTENSION.length) : name;
   const suffix = attempt > 1 ? ` ${attempt}` : '';
-  return joinDocPath(dirname(path), `${stem} (conflict ${conflictTimestamp(date)}${suffix})${MARKDOWN_EXTENSION}`);
+  const tail = ` (conflict ${conflictTimestamp(date)}${suffix})${MARKDOWN_EXTENSION}`;
+  // A document whose own name is already near the 255-byte limit (e.g. created
+  // by another app) gets a shortened stem, so its conflict copy can still be written.
+  const fitted = truncateUtf8(stem, MAX_FILENAME_BYTES - utf8Length(tail));
+  return joinDocPath(dirname(path), `${fitted}${tail}`);
 }
 
 const CONFLICT_RE = / \(conflict \d{4}-\d{2}-\d{2} \d{4}(?: \d+)?\)\.md$/i;
