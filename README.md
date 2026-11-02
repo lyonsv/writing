@@ -49,7 +49,7 @@ pnpm install
 
 | Run | Command |
 |---|---|
-| Desktop app (development) | `pnpm dev:desktop`: the Expo web dev server plus Electron. Uses `~/Documents/Margin`; set `MARGIN_LIBRARY_DIR=/tmp/margin-test` to try it on a scratch folder. |
+| Desktop app (development) | `pnpm dev:desktop`: the Expo web dev server (port 8081) plus Electron. It uses a separate **`~/Documents/Margin Dev`** library and `~/Library/Application Support/Margin Dev` settings, never your real `~/Documents/Margin`; override with `MARGIN_LIBRARY_DIR` and `MARGIN_USER_DATA_DIR`. |
 | Packaged desktop app | `pnpm build:desktop`, then open `apps/desktop/release/mac-arm64/Margin.app`. `pnpm --filter @margin/desktop package` makes a `.dmg`. |
 | Browser (no sync) | `pnpm dev:web`, then open http://localhost:8081 (documents in IndexedDB). |
 | The web app with sync | `pnpm build:web && pnpm dev:server`, then open http://127.0.0.1:3000 and sign in (same as the hosted iPhone app). |
@@ -124,7 +124,8 @@ flowchart LR
 ## Troubleshooting
 - **"Margin can't be opened because Apple cannot check it…":** the build is unsigned. Right-click → Open, or System Settings › Privacy & Security › Open Anyway.
 - **`pnpm install` warns about Node 24 for `apps/server`:** harmless on Node 22/23 locally; Vercel runs Node 24.
-- **The desktop app shows a blank window in development:** wait for the Expo dev server on :8081 (`pnpm dev:desktop` starts it). If port 8081 is taken, stop the other Metro server.
+- **The desktop app shows a blank window in development:** wait for the Expo dev server on :8081 (`pnpm dev:desktop` starts it).
+- **Port 8081 already in use:** `pnpm dev:web` and `pnpm dev:desktop` (and `pnpm --filter @margin/app start`) all start Metro on 8081, so run one at a time, or give the desktop one another port with `MARGIN_DEV_PORT=8082 pnpm dev:desktop`.
 - **End-to-end tests test old code:** they run the *built* app. Rebuild with `pnpm build:desktop` after changing `apps/app` or `apps/desktop`.
 - **Sign-in page says "Invalid sign-in request":** the server URL, OAuth App callback and `PUBLIC_URL` must match exactly (use `127.0.0.1`, not `localhost`).
 - **"Sync error: the server's copy … is older":** see [docs/sync-recovery.md](docs/sync-recovery.md). Nothing was changed on your Mac.

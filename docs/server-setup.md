@@ -92,7 +92,15 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
    ```sh
    npx vercel@latest deploy --prod
    ```
-4. Check it: `curl -s https://margin-sync.vercel.app/api/me` → `401 {"error":"unauthorized"}`. Then use Margin › Sign In… in the packaged app (it defaults to production; a dev build needs `MARGIN_SERVER_URL=https://margin-sync.vercel.app`).
+4. Check it (signed out, from any machine):
+   ```sh
+   curl -s -o /dev/null -w '%{http_code}\n' https://margin-sync.vercel.app/api/me          # 401 (JSON {"error":"unauthorized"})
+   curl -s -o /dev/null -w '%{http_code}\n' https://margin-sync.vercel.app/                # 401: the sign-in page, not the app
+   curl -s https://margin-sync.vercel.app/ | grep -c 'id="root"'                           # 0: the app shell isn't sent
+   curl -s -o /dev/null -w '%{http_code}\n' https://margin-sync.vercel.app/index.html      # 401 too: no HTML is public (ADR 0020)
+   curl -sI https://margin-sync.vercel.app/manifest.webmanifest | head -1                   # 200: static files are public
+   ```
+    Then use Margin › Sign In… in the packaged app (it defaults to production; a dev build needs `MARGIN_SERVER_URL=https://margin-sync.vercel.app`).
 
 **Sync errors** ("the server's copy … is older than this Mac's"): see [sync-recovery.md](sync-recovery.md).
 

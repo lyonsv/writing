@@ -32,7 +32,7 @@ Run everything from the repo root (Node >= 22, pnpm 10).
 | Command | What it does |
 |---|---|
 | `pnpm install` | Install all workspaces. Electron downloads its binary on first launch. |
-| `pnpm dev:desktop` | Starts the Expo web dev server on :8081, bundles main/preload, launches Electron against it. |
+| `pnpm dev:desktop` | Starts the Expo web dev server on :8081, bundles main/preload, launches Electron against it, with a separate `~/Documents/Margin Dev` library and `~/Library/Application Support/Margin Dev` userData (override with `MARGIN_LIBRARY_DIR` / `MARGIN_USER_DATA_DIR`). Port 8081 is shared with `dev:web` and Expo Go: run one at a time or set `MARGIN_DEV_PORT`. |
 | `pnpm dev:web` | Expo web dev server only (browser; library in IndexedDB, no sync). |
 | `pnpm dev:server` | Server on http://127.0.0.1:3000; also serves the web app from `apps/app/dist` when built (`pnpm build:web`): sign in at `/`, same origin as the API (ADR 0020). (Hono under `@hono/node-server`, in-memory store; no Vercel login). Reads `apps/server/.env.local`; see `docs/server-setup.md`. |
 | `pnpm --filter @margin/app start` | Expo dev server for iOS (Expo Go on a phone; owner checklist `docs/ios-testing.md`). |

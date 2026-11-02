@@ -2,6 +2,7 @@
 // watch mode, then launch Electron pointed at the dev server.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,9 +51,16 @@ run('pnpm', ['--filter', '@margin/app', 'exec', 'expo', 'start', '--web', '--por
 console.log(`Waiting for Expo web dev server at ${devUrl} ...`);
 await waitFor(devUrl);
 
+// Development never touches your real library or settings: a separate documents
+// folder and userData unless you set them (validator M7). The packaged app uses
+// ~/Documents/Margin and ~/Library/Application Support/Margin.
+const libraryDir = process.env.MARGIN_LIBRARY_DIR ?? path.join(os.homedir(), 'Documents', 'Margin Dev');
+const userDataDir = process.env.MARGIN_USER_DATA_DIR ?? path.join(os.homedir(), 'Library', 'Application Support', 'Margin Dev');
+console.log(`Development library: ${libraryDir} (MARGIN_LIBRARY_DIR); settings: ${userDataDir} (MARGIN_USER_DATA_DIR)`);
+
 const electronBin = createRequire(import.meta.url)('electron');
 const electron = run(electronBin, ['.'], {
   cwd: root,
-  env: { ...process.env, MARGIN_DEV_SERVER_URL: devUrl },
+  env: { ...process.env, MARGIN_DEV_SERVER_URL: devUrl, MARGIN_LIBRARY_DIR: libraryDir, MARGIN_USER_DATA_DIR: userDataDir },
 });
 electron.on('exit', (code) => shutdown(code ?? 0));

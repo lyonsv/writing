@@ -34,7 +34,7 @@ Focus mode hides everything but your text and dims all but the sentence you're i
 
 ## Sync
 
-Sign in with GitHub (Margin › Sign In… on a Mac, Settings on iPhone) to keep your library in sync. If the same document changes on two devices at once, Margin keeps both versions: yours is saved as "name (conflict …)".
+On a Mac, choose Margin › Sign In… to keep your library in sync with your Margin server. On iPhone, Margin is a web app you've already signed in to: your library syncs on its own (Settings shows your account and devices). If the same document changes on two devices at once, Margin keeps both versions: yours is saved as "name (conflict …)".
 
 Happy writing.
 `;
