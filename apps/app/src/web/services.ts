@@ -66,7 +66,7 @@ export function webServices(): WebServices {
   });
   const ready = library.init().then(async () => {
     try {
-      await migrateLocalStorage(library, window.localStorage);
+      await migrateLocalStorage(library, fs, window.localStorage);
     } catch (e) {
       console.error('Margin: migrating the old browser library failed (it is kept in localStorage)', e);
     }

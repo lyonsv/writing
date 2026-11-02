@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { NativeLibrary, sha256Hex } from '../src/local/library';
 import { FsExistsError } from '../src/local/nativeFs';
 import { IdbFs, openMarginDb } from '../src/web/idbFs';
-import { LEGACY_BACKUP_KEY, LEGACY_LIBRARY_KEY, migrateLocalStorage } from '../src/web/migrate';
+import { LEGACY_BACKUP_KEY, LEGACY_LIBRARY_KEY, MIGRATION_MARKER, migrateLocalStorage } from '../src/web/migrate';
 
 let n = 0;
 let fs: IdbFs;
@@ -120,13 +120,40 @@ describe('NativeLibrary on IndexedDB (the web/PWA store)', () => {
       folders: ['f', 'empty'],
     };
     store.set(LEGACY_LIBRARY_KEY, JSON.stringify(legacy));
-    const result = await migrateLocalStorage(lib, storage);
+    const result = await migrateLocalStorage(lib, fs, storage);
     expect(result!.migrated.sort()).toEqual(['f/deep.md', 'old.md']);
     expect(result!.skipped.sort()).toEqual(['../evil.md', 'clash.md']);
     expect(await text('old.md')).toBe('from localStorage');
     expect(await text('clash.md')).toBe('already here');
     expect(store.has(LEGACY_LIBRARY_KEY)).toBe(false);
     expect(JSON.parse(store.get(LEGACY_BACKUP_KEY)!)).toEqual(legacy);
-    expect(await migrateLocalStorage(lib, storage)).toBeNull(); // once
+    expect(await migrateLocalStorage(lib, fs, storage)).toBeNull(); // once
+  });
+
+  it('never re-migrates once done, even when the localStorage backup can’t be written (quota): deleted documents stay deleted', async () => {
+    const store = new Map<string, string>([[LEGACY_LIBRARY_KEY, JSON.stringify({ docs: { 'old.md': { content: 'legacy' } }, folders: [] })]]);
+    const quota = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: () => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      },
+      removeItem: (k: string) => void store.delete(k),
+    } as unknown as Storage;
+    expect((await migrateLocalStorage(lib, fs, quota))!.migrated).toEqual(['old.md']);
+    expect(store.has(LEGACY_LIBRARY_KEY)).toBe(true); // couldn't move it
+    await lib.delete('old.md'); // the user deletes it
+    expect(await migrateLocalStorage(lib, fs, quota)).toBeNull(); // next launch
+    expect((await lib.listTree()).entries).toEqual([]);
+  });
+
+  it('resumes a migration that died part-way (marker "started"), create-only', async () => {
+    const store = new Map<string, string>([[LEGACY_LIBRARY_KEY, JSON.stringify({ docs: { 'a.md': { content: 'A' }, 'b.md': { content: 'B' } } })]]);
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) } as unknown as Storage;
+    await fs.mkdir('.margin');
+    await fs.writeAtomic(MIGRATION_MARKER, new TextEncoder().encode('{"state":"started"}'));
+    await lib.save('a.md', 'A, already copied and then edited');
+    const r = await migrateLocalStorage(lib, fs, storage);
+    expect(r!.migrated).toEqual(['b.md']);
+    expect(await text('a.md')).toBe('A, already copied and then edited');
   });
 });
