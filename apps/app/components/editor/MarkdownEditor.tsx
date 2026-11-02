@@ -2,12 +2,13 @@
 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { Annotation, EditorSelection, EditorState } from '@codemirror/state';
+import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, keymap, placeholder } from '@codemirror/view';
-import { FLUSH_EVENT } from '@margin/core';
+import { FLUSH_EVENT, type FocusScope } from '@margin/core';
 import type { DOMProps } from 'expo/dom';
 import { useEffect, useRef, type CSSProperties } from 'react';
 
+import { focusExtensions, focusScope as focusScopeFacet, typewriterEnabled } from './focus';
 import { fontFaceCss } from './fonts';
 import { EDITOR_CSS_VARS, marginHighlight, marginTheme } from './theme';
 
@@ -16,6 +17,9 @@ export interface ExternalContent {
   /** Changes whenever new external content should be considered. */
   token: string;
 }
+
+/** Commands the editor can request (keyboard shortcuts when there is no app menu). */
+export type EditorCommand = 'toggle-focus' | 'toggle-typewriter' | 'scope-sentence' | 'scope-paragraph' | 'scope-off';
 
 export interface MarkdownEditorProps {
   /** Text shown at mount. Later changes are ignored; remount (via `key`) to load another document. */
@@ -34,6 +38,17 @@ export interface MarkdownEditorProps {
    */
   external?: ExternalContent | null;
   onExternalResult?: (token: string, applied: boolean) => Promise<void>;
+  /** Focus mode on: hides the scrollbar (cursor-only chrome). */
+  focusMode?: boolean;
+  /** What to keep undimmed; `null` = no dimming. */
+  focusScope?: FocusScope | null;
+  /** Keep the caret line vertically centred. */
+  typewriter?: boolean;
+  /**
+   * Keyboard shortcuts handled inside the editor. Not bound in the desktop
+   * shell, where the application menu owns the same accelerators.
+   */
+  onCommand?: (command: EditorCommand) => Promise<void>;
   /** Debounce interval in ms. */
   debounceMs?: number;
   dom?: DOMProps;
@@ -52,6 +67,14 @@ function ensureGlobalStyles(): void {
   document.head.appendChild(style);
 }
 
+function focusConfig(focusMode: boolean, scope: FocusScope | null): Extension {
+  return [focusScopeFacet.of(scope), focusMode ? EditorView.editorAttributes.of({ class: 'cm-focus-mode' }) : []];
+}
+
+function typewriterConfig(on: boolean): Extension {
+  return on ? [typewriterEnabled.of(true), EditorView.editorAttributes.of({ class: 'cm-typewriter' })] : [];
+}
+
 /** True when running inside the Electron shell (preload bridge present). */
 function isDesktopShell(): boolean {
   return typeof window !== 'undefined' && 'marginDesktop' in window;
@@ -62,6 +85,10 @@ export default function MarkdownEditor({
   onChange,
   external,
   onExternalResult,
+  focusMode = false,
+  focusScope = null,
+  typewriter = false,
+  onCommand,
   debounceMs = 300,
 }: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -72,6 +99,10 @@ export default function MarkdownEditor({
   onChangeRef.current = onChange;
   const onExternalResultRef = useRef(onExternalResult);
   onExternalResultRef.current = onExternalResult;
+  const onCommandRef = useRef(onCommand);
+  onCommandRef.current = onCommand;
+  const compartments = useRef({ focus: new Compartment(), typewriter: new Compartment(), entering: new Compartment() });
+  const initialConfig = useRef({ focusMode, focusScope, typewriter });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -108,6 +139,30 @@ export default function MarkdownEditor({
             autocorrect: 'on',
             autocapitalize: 'sentences',
           }),
+          focusExtensions(),
+          compartments.current.focus.of(focusConfig(initialConfig.current.focusMode, initialConfig.current.focusScope)),
+          compartments.current.typewriter.of(typewriterConfig(initialConfig.current.typewriter)),
+          compartments.current.entering.of([]),
+          isDesktopShell()
+            ? []
+            : keymap.of(
+                (
+                  [
+                    ['Mod-Shift-f', 'toggle-focus'],
+                    ['Mod-Alt-t', 'toggle-typewriter'],
+                    ['Mod-Alt-1', 'scope-sentence'],
+                    ['Mod-Alt-2', 'scope-paragraph'],
+                    ['Mod-Alt-0', 'scope-off'],
+                  ] as const
+                ).map(([key, command]) => ({
+                  key,
+                  preventDefault: true,
+                  run: () => {
+                    void onCommandRef.current?.(command);
+                    return true;
+                  },
+                })),
+              ),
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
@@ -144,6 +199,36 @@ export default function MarkdownEditor({
     // initialValue is intentionally read once at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounceMs]);
+
+  // Focus / typewriter settings changes reconfigure compartments in place.
+  const prevScope = useRef(focusScope);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const effects = [compartments.current.focus.reconfigure(focusConfig(focusMode, focusScope))];
+    let enteringTimer: ReturnType<typeof setTimeout> | undefined;
+    if (prevScope.current === null && focusScope !== null) {
+      // Fade the surrounding text out when focus mode turns on.
+      effects.push(compartments.current.entering.reconfigure(EditorView.editorAttributes.of({ class: 'cm-focus-entering' })));
+      enteringTimer = setTimeout(() => {
+        viewRef.current?.dispatch({ effects: compartments.current.entering.reconfigure([]) });
+      }, 260);
+    }
+    prevScope.current = focusScope;
+    view.dispatch({ effects });
+    return () => clearTimeout(enteringTimer);
+  }, [focusMode, focusScope]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: [
+        compartments.current.typewriter.reconfigure(typewriterConfig(typewriter)),
+        ...(typewriter ? [EditorView.scrollIntoView(view.state.selection.main.head, { y: 'center' })] : []),
+      ],
+    });
+  }, [typewriter]);
 
   const lastExternalToken = useRef<string | null>(null);
   useEffect(() => {

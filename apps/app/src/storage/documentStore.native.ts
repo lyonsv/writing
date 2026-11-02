@@ -1,4 +1,10 @@
-import { MemoryDocumentStore, type DesktopBridge, type DocumentStore } from '@margin/core';
+import {
+  MemoryDocumentStore,
+  MemorySettingsStore,
+  type DesktopBridge,
+  type DocumentStore,
+  type SettingsStore,
+} from '@margin/core';
 
 import { storeBackend, type DocumentBackend } from './documentBackend';
 
@@ -22,4 +28,12 @@ export function getDocumentStore(): DocumentStore {
 export function getDocumentBackend(): DocumentBackend {
   backend ??= storeBackend(getDocumentStore());
   return backend;
+}
+
+let settings: SettingsStore | undefined;
+
+/** Stub until M6: in-memory settings (reset on launch). */
+export function getSettingsStore(): SettingsStore {
+  settings ??= new MemorySettingsStore();
+  return settings;
 }

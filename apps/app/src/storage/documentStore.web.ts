@@ -1,7 +1,8 @@
-import { DESKTOP_BRIDGE_KEY, type DesktopBridge, type DocumentStore } from '@margin/core';
+import { DESKTOP_BRIDGE_KEY, type DesktopBridge, type DocumentStore, type SettingsStore } from '@margin/core';
 
 import { desktopBackend, storeBackend, type DocumentBackend } from './documentBackend';
 import { createLocalStorageStore } from './localStorageStore';
+import { desktopSettingsStore, localStorageSettingsStore } from './settingsStore';
 
 /**
  * The web bundle runs both in a browser and inside the Electron shell, so the
@@ -31,4 +32,15 @@ export function getDocumentBackend(): DocumentBackend {
     backend = bridge ? desktopBackend(bridge) : storeBackend(getDocumentStore());
   }
   return backend;
+}
+
+let settings: SettingsStore | undefined;
+
+/** Settings persistence: Electron userData JSON via IPC, or localStorage in a browser. */
+export function getSettingsStore(): SettingsStore {
+  if (!settings) {
+    const bridge = getDesktopBridge();
+    settings = bridge ? desktopSettingsStore(bridge) : localStorageSettingsStore();
+  }
+  return settings;
 }

@@ -16,6 +16,7 @@ export const EDITOR_CSS_VARS = `
   --margin-caret: #1a8fc7;
   --margin-selection: rgba(26, 143, 199, 0.18);
   --margin-code-bg: rgba(0, 0, 0, 0.04);
+  --margin-dim-opacity: 0.28;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -26,6 +27,7 @@ export const EDITOR_CSS_VARS = `
     --margin-caret: #4fb3e6;
     --margin-selection: rgba(79, 179, 230, 0.25);
     --margin-code-bg: rgba(255, 255, 255, 0.05);
+    --margin-dim-opacity: 0.32;
   }
 }
 html, body { margin: 0; padding: 0; height: 100%; background: var(--margin-bg); }
