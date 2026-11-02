@@ -3,16 +3,13 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 import {
-  SyncPreconditionError,
-  SyncRejectedError,
+  HttpSyncRemote,
   foldPathCase,
   isSyncablePath,
   runSync,
   type BaseEntry,
   type LocalFile,
-  type RemoteEntry,
   type SyncLocal,
-  type SyncRemote,
   type SyncReport,
   type SyncStatus,
 } from '@margin/core';
@@ -62,54 +59,6 @@ interface StateFile {
 }
 
 const sha256 = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
-
-class HttpRemote implements SyncRemote {
-  constructor(private readonly account: AccountManager) {}
-
-  private async check(res: Response): Promise<Response> {
-    if (res.ok) return res;
-    if (res.status === 412 || res.status === 409) throw new SyncPreconditionError(`HTTP ${res.status}`);
-    if (res.status === 413) throw new SyncRejectedError('too large to sync (over 4 MB)');
-    if (res.status === 400) throw new SyncRejectedError('name not supported by sync');
-    throw new Error(`server error ${res.status}`);
-  }
-
-  private q(p: string) {
-    return `?path=${encodeURIComponent(p)}`;
-  }
-
-  async manifest(): Promise<{ seq?: number; entries: RemoteEntry[] }> {
-    const res = await this.check(await this.account.request('GET', '/api/sync/manifest'));
-    const body = (await res.json()) as { seq?: unknown; entries: RemoteEntry[] };
-    return { seq: typeof body.seq === 'number' ? body.seq : undefined, entries: body.entries };
-  }
-
-  async get(p: string) {
-    const res = await this.account.request('GET', `/api/sync/file${this.q(p)}`, { timeoutMs: 60_000 });
-    if (res.status === 404) return null;
-    await this.check(res);
-    const entry = JSON.parse(decodeURIComponent(res.headers.get('X-Margin-Entry') ?? '')) as RemoteEntry;
-    return { bytes: new Uint8Array(await res.arrayBuffer()), entry };
-  }
-
-  async put(p: string, bytes: Uint8Array, ifMatch: string | null): Promise<RemoteEntry> {
-    const res = await this.account.request('PUT', `/api/sync/file${this.q(p)}`, {
-      body: bytes,
-      headers: ifMatch === null ? { 'If-None-Match': '*' } : { 'If-Match': `"${ifMatch}"` },
-      timeoutMs: 60_000,
-    });
-    return ((await (await this.check(res)).json()) as { entry: RemoteEntry }).entry;
-  }
-
-  async delete(p: string, ifMatch: string): Promise<void> {
-    await this.check(await this.account.request('DELETE', `/api/sync/file${this.q(p)}`, { headers: { 'If-Match': `"${ifMatch}"` } }));
-  }
-
-  async move(from: string, to: string, ifMatch: string): Promise<RemoteEntry> {
-    const res = await this.account.request('POST', '/api/sync/move', { json: { from, to, ifMatch } });
-    return ((await (await this.check(res)).json()) as { entry: RemoteEntry }).entry;
-  }
-}
 
 /** The library folder as a `SyncLocal`. Paths are NFC; on-disk names may differ in normalisation. */
 class LibraryLocal implements SyncLocal {
@@ -318,7 +267,7 @@ export class SyncService {
     try {
       const report = await runSync({
         local: new LibraryLocal(library, state, this.options.trash),
-        remote: new HttpRemote(this.options.account),
+        remote: new HttpSyncRemote((method, pathname, init) => this.options.account.request(method, pathname, init)),
         base,
         saveBase: persist,
         hash: sha256,

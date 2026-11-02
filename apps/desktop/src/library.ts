@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   LIBRARY_LIST_LIMIT,
   DocumentStoreError,
+  SerialQueue,
   conflictCopyPath,
   isWithin as isWithinKey,
   rebasePath,
@@ -23,7 +24,6 @@ import {
   type SaveResult,
 } from '@margin/core';
 
-import { SerialQueue } from './serialQueue';
 
 /** Thrown when a requested path would resolve outside the library root. */
 export class OutsideRootError extends Error {

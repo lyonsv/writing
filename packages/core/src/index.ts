@@ -12,3 +12,6 @@ export * from './lineEndings';
 export * from './tree';
 export * from './account';
 export * from './sync';
+export * from './serialQueue';
+export * from './bytes';
+export * from './syncHttp';
