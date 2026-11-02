@@ -212,6 +212,22 @@ describe('two desktop clients against the local server', () => {
     expect(Object.values(final).sort()).toEqual(['remote edit', 'v0 plus unsaved typing']);
   });
 
+  it('a server restored from an older backup changes nothing locally and shows a sync error', async () => {
+    const a = await device('A');
+    write(a, 'early.md', 'v1');
+    await a.sync.syncNow();
+    const backup = (await server.store.get('sync/manifest.json'))!.value;
+    write(a, 'early.md', 'v2');
+    write(a, 'late.md', 'written after the backup');
+    await a.sync.syncNow();
+    await server.store.put('sync/manifest.json', backup); // the rollback
+    const before = snapshot(a);
+    await a.sync.syncNow();
+    expect(snapshot(a)).toEqual(before);
+    expect(a.trashed).toEqual([]);
+    expect(a.sync.status()).toMatchObject({ state: 'error', message: expect.stringContaining('older') });
+  });
+
   it('keeps going past documents the server refuses, and reports them', async () => {
     const a = await device('A');
     write(a, 'big.md', 'x'.repeat(4 * 1024 * 1024 + 10));

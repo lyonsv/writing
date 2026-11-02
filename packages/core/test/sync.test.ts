@@ -178,7 +178,7 @@ describe('randomised two-device simulation (no data loss, convergence)', () => {
    * was present* (a conscious act). Text that sync overwrote must survive
    * elsewhere: on the server, the other device, or a conflict copy.
    */
-  async function simulate(seed: number) {
+  async function simulate(seed: number, opts: { stale?: boolean } = {}) {
     const rand = rng(seed);
     const pick = <T,>(xs: readonly T[]) => xs[Math.floor(rand() * xs.length)]!;
     const remote = new FakeRemote();
@@ -212,17 +212,34 @@ describe('randomised two-device simulation (no data loss, convergence)', () => {
       }
     };
 
+    // Stale reads: some manifests come from an older snapshot (lagging replica).
+    // Then sync must never trash or overwrite local text on that stale information:
+    // every remove must match a server that really deleted the path, every
+    // overwrite must write what the server really has now.
+    const violations: string[] = [];
+    if (opts.stale) {
+      remote.serveStale = () => (rand() < 0.3 && remote.history.length ? Math.floor(rand() * remote.history.length) : undefined);
+      for (const d of devices) {
+        d.local.onDestructive = (kind, path, bytes) => {
+          const truth = remote.live(path);
+          if (kind === 'remove' && truth) violations.push(`${d.name} trashed ${path} although the server still has it`);
+          if (kind === 'overwrite' && truth?.hash !== sha(bytes!)) violations.push(`${d.name} overwrote ${path} with a non-current version`);
+        };
+      }
+    }
+
     for (let step = 0; step < 60; step++) {
       const d = pick(devices);
       if (rand() < 0.55) userAct(d);
       else {
         // Sometimes the user keeps typing while sync runs.
         d.local.beforeMutate = rand() < 0.3 ? async () => (rand() < 0.3 ? userAct(d) : undefined) : undefined;
-        // Sometimes the other device syncs mid-run.
+        // Sometimes the other device syncs mid-run (not in stale mode, where the
+        // destructive-action check compares against the server's state at that instant).
         const other = devices.find((x) => x !== d)!;
         let raced = false;
         remote.beforeMutate =
-          rand() < 0.2
+          !opts.stale && rand() < 0.2
             ? async () => {
                 if (raced) return;
                 raced = true;
@@ -236,6 +253,8 @@ describe('randomised two-device simulation (no data loss, convergence)', () => {
       }
     }
 
+    remote.serveStale = undefined;
+    expect(violations, `seed ${seed}`).toEqual([]);
     // Quiesce: no more user activity; sync until both settle.
     for (let round = 0; round < 8; round++) {
       const reports: SyncReport[] = [];
@@ -258,4 +277,66 @@ describe('randomised two-device simulation (no data loss, convergence)', () => {
   for (let seed = 1; seed <= Number(process.env.SYNC_SEEDS ?? 300); seed++) {
     it(`seed ${seed}`, () => simulate(seed));
   }
+
+  // Validator M5 MAJOR 1: stale manifests must never trash or overwrite newer text.
+  for (let seed = 1; seed <= Number(process.env.SYNC_SEEDS ?? 300); seed++) {
+    it(`seed ${seed} with stale manifests`, () => simulate(seed, { stale: true }));
+  }
+});
+
+describe('stale reads and rollbacks (validator M5 MAJOR 1)', () => {
+  it('planner: an older rev than the base is stale, never a download or delete', () => {
+    const base = B({ 'a.md': ['new', '5'] });
+    expect(planSync([L('a.md', 'new')], base, [R('a.md', 'old', '3')], { remoteSeq: 9 })).toEqual([{ type: 'stale', path: 'a.md', reason: 'older-rev' }]);
+    expect(planSync([L('a.md', 'new')], base, [R('a.md', 'old', '3', true)], { remoteSeq: 9 })).toEqual([{ type: 'stale', path: 'a.md', reason: 'older-rev' }]);
+  });
+
+  it('planner: missing from a manifest that is not newer than the base is stale; from a newer one it is a delete', () => {
+    const base = B({ 'a.md': ['x', '5'], 'b.md': ['y', '4'] });
+    const remote = [R('b.md', 'y', '4')];
+    expect(planSync([L('a.md', 'x'), L('b.md', 'y')], base, remote, { remoteSeq: 5 })).toEqual([{ type: 'stale', path: 'a.md', reason: 'missing-before-seq' }]);
+    // seq moved past our base: the entry (and its tombstone) can legitimately be gone.
+    expect(planSync([L('a.md', 'x'), L('b.md', 'y')], base, remote, { remoteSeq: 12 })).toEqual([{ type: 'delete-local', path: 'a.md', expectLocal: H('x') }]);
+  });
+
+  it('planner: a whole manifest older than the base (rollback) plans nothing but stale', () => {
+    const base = B({ 'a.md': ['x', '7'], 'b.md': ['y', '2'] });
+    const actions = planSync([L('a.md', 'x2'), L('c.md', 'new')], base, [R('a.md', 'x', '1')], { remoteSeq: 3 });
+    expect(actions.every((a) => a.type === 'stale')).toBe(true);
+    expect(actions.map((a) => (a.type === 'stale' ? a.path : ''))).toEqual(['a.md', 'b.md']);
+  });
+
+  it('a server restored from an old backup trashes and overwrites nothing, and reports it', async () => {
+    const remote = new FakeRemote();
+    const a = { local: new FakeLocal(), base: new Map<string, BaseEntry>() };
+    a.local.files.set('kept.md', enc('v1'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    const backup = remote.history.length - 1;
+    a.local.files.set('kept.md', enc('v2'));
+    a.local.files.set('later.md', enc('written after the backup'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    expect(Object.keys(remote.snapshot()).sort()).toEqual(['kept.md', 'later.md']);
+
+    remote.rollbackTo(backup); // later.md vanishes, kept.md goes back to v1, seq goes back
+    const before = a.local.snapshot();
+    const report = await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    expect(a.local.snapshot()).toEqual(before); // nothing trashed or overwritten
+    expect(report.stale.length).toBeGreaterThan(0);
+    expect(report.downloaded.concat(report.deletedLocal, report.uploaded)).toEqual([]);
+    expect(report.settled).toBe(false);
+  });
+
+  it('a stale body (older rev than the base) is never written locally', async () => {
+    const remote = new FakeRemote();
+    const a = { local: new FakeLocal(), base: new Map<string, BaseEntry>() };
+    a.local.files.set('doc.md', enc('v1'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    a.local.files.set('doc.md', enc('v2'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    // Pretend the base saw an even newer rev (e.g. another device), so the server's body is older.
+    a.base.set('doc.md', { hash: sha(enc('v2')), rev: '999' });
+    const report = await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    expect(a.local.snapshot()).toEqual({ 'doc.md': 'v2' });
+    expect(report.stale.map((s) => s.path)).toEqual(['doc.md']);
+  });
 });

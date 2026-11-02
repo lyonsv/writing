@@ -73,9 +73,10 @@ class HttpRemote implements SyncRemote {
     return `?path=${encodeURIComponent(p)}`;
   }
 
-  async manifest(): Promise<RemoteEntry[]> {
+  async manifest(): Promise<{ seq?: number; entries: RemoteEntry[] }> {
     const res = await this.check(await this.account.request('GET', '/api/sync/manifest'));
-    return ((await res.json()) as { entries: RemoteEntry[] }).entries;
+    const body = (await res.json()) as { seq?: unknown; entries: RemoteEntry[] };
+    return { seq: typeof body.seq === 'number' ? body.seq : undefined, entries: body.entries };
   }
 
   async get(p: string) {
@@ -290,6 +291,16 @@ export class SyncService {
       });
       await persist();
       this.lastReport = report;
+      if (report.stale.length) {
+        // The server's data is older than what this device already synced (rollback or a
+        // stale replica). Nothing was changed for those paths; make it visible.
+        this.setStatus({
+          state: 'error',
+          lastSyncedAt: previous.lastSyncedAt,
+          message: `the server's copy of ${report.stale.length} document(s) is older than this Mac's; nothing was changed`,
+        });
+        return;
+      }
       const notes: string[] = [];
       if (report.rejected.length) notes.push(`${report.rejected.length} document(s) not synced (${report.rejected[0]!.reason})`);
       if (report.conflicts.length) notes.push(`${report.conflicts.length} conflict copy(s) created`);

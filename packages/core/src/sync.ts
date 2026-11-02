@@ -53,7 +53,9 @@ export type SyncAction =
   | { type: 'adopt'; path: string; entry: BaseEntry }
   | { type: 'forget'; path: string }
   | { type: 'move-remote'; from: string; to: string; ifMatch: string }
-  | { type: 'move-local'; from: string; to: string; expectLocal: ContentHash };
+  | { type: 'move-local'; from: string; to: string; expectLocal: ContentHash }
+  /** The server's view of this path is older than our base (stale read or rollback): do nothing, report it. */
+  | { type: 'stale'; path: string; reason: 'older-rev' | 'missing-before-seq' | 'manifest-rollback' };
 
 /** Largest document we sync (Vercel's request/response limit is 4.5 MB; ADR 0013). */
 export const MAX_SYNC_BYTES = 4 * 1024 * 1024;
@@ -85,6 +87,22 @@ export function isSyncablePath(path: string): boolean {
 export interface PlanOptions {
   /** Detect renames (delete + create of the same content) and turn them into moves. Default true. */
   detectMoves?: boolean;
+  /**
+   * The manifest's sequence number (the server's highest rev). With it, an entry
+   * missing from a manifest that isn't newer than our base is recognised as a
+   * stale read or rollback rather than a deletion.
+   */
+  remoteSeq?: number;
+}
+
+/** Server revs are decimal integers; anything else isn't comparable (no staleness checks then). */
+const revNumber = (rev: string): number | undefined => (/^\d{1,15}$/.test(rev) ? Number(rev) : undefined);
+
+/** True if `remote` is provably older than `base` (lower rev). */
+export function isOlderRev(remote: string, base: string): boolean {
+  const r = revNumber(remote);
+  const b = revNumber(base);
+  return r !== undefined && b !== undefined && r < b;
 }
 
 /**
@@ -99,13 +117,39 @@ export function planSync(
 ): SyncAction[] {
   const L = new Map(local.map((f) => [f.path, f]));
   const R = new Map(remote.filter((e) => !e.deleted).map((e) => [e.path, e]));
+  /** Every entry the server reported, tombstones included. */
+  const any = new Map(remote.map((e) => [e.path, e]));
   const paths = new Set([...L.keys(), ...base.keys(), ...R.keys()]);
   const actions: SyncAction[] = [];
+
+  // A manifest older than what we've already synced (restored backup, stale
+  // replica): touch nothing at all. Server revs come from its `seq`, so a
+  // healthy manifest's seq is never below a rev we've seen.
+  const baseRevs = [...base.values()].map((b) => revNumber(b.rev)).filter((n): n is number => n !== undefined);
+  const maxBaseRev = baseRevs.length ? Math.max(...baseRevs) : undefined;
+  if (options.remoteSeq !== undefined && maxBaseRev !== undefined && options.remoteSeq < maxBaseRev) {
+    return [...base.keys()].sort().map((path) => ({ type: 'stale', path, reason: 'manifest-rollback' }));
+  }
 
   for (const path of [...paths].sort()) {
     const l = L.get(path);
     const b = base.get(path);
     const r = R.get(path);
+
+    if (b) {
+      const reported = any.get(path);
+      // The server shows an older revision than we already agreed on: stale or rolled back.
+      if (reported && isOlderRev(reported.rev, b.rev)) {
+        actions.push({ type: 'stale', path, reason: 'older-rev' });
+        continue;
+      }
+      // Missing entirely (not even a tombstone) from a manifest that isn't newer than our
+      // base: it can't have been deleted since (a delete bumps seq), so it's a stale read.
+      if (!reported && options.remoteSeq !== undefined && maxBaseRev !== undefined && options.remoteSeq <= maxBaseRev) {
+        actions.push({ type: 'stale', path, reason: 'missing-before-seq' });
+        continue;
+      }
+    }
 
     if (!b) {
       if (l && r) actions.push(l.hash === r.hash ? { type: 'adopt', path, entry: { hash: r.hash, rev: r.rev } } : { type: 'conflict', path });
@@ -205,6 +249,9 @@ export class SyncPreconditionError extends Error {
   }
 }
 
+/** Internal: the server returned an older revision than our base. */
+class SyncStaleError extends Error {}
+
 /** Thrown by `SyncRemote` for a document the server won't take (too large, bad path: 413/400). Skipped, not retried. */
 export class SyncRejectedError extends Error {
   constructor(message: string) {
@@ -214,7 +261,8 @@ export class SyncRejectedError extends Error {
 }
 
 export interface SyncRemote {
-  manifest(): Promise<RemoteEntry[]>;
+  /** `seq`: the server's highest rev (enables stale/rollback detection; ADR 0013 amendments). */
+  manifest(): Promise<{ seq?: number; entries: RemoteEntry[] }>;
   get(path: string): Promise<{ bytes: Uint8Array; entry: RemoteEntry } | null>;
   /** `ifMatch: null` = create-only (If-None-Match: *). */
   put(path: string, bytes: Uint8Array, ifMatch: string | null): Promise<RemoteEntry>;
@@ -243,6 +291,8 @@ export interface SyncReport {
   conflicts: string[];
   /** Paths left for the next run (raced with an edit or another device). */
   deferred: string[];
+  /** Paths skipped because the server's view was older than ours (stale read or rollback). */
+  stale: Array<{ path: string; reason: string }>;
   /** Paths the server refused (too large, invalid), with the reason. */
   rejected: Array<{ path: string; reason: string }>;
   /** True if the last pass planned nothing: local, base and remote agree. */
@@ -264,6 +314,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
     conflicts: [],
     deferred: [],
     rejected: [],
+    stale: [],
     settled: false,
   };
   const { local, remote, base } = deps;
@@ -277,15 +328,17 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   };
 
   for (let pass = 0; pass < (deps.maxPasses ?? 4); pass++) {
-    const [files, manifest] = await Promise.all([local.list(), remote.manifest()]);
-    const actions = planSync(
+    const [files, { seq, entries: manifest }] = await Promise.all([local.list(), remote.manifest()]);
+    const planned = planSync(
       files.filter((f) => !rejected.has(f.path)),
       base,
       manifest.filter((e) => !rejected.has(e.path)),
-      { detectMoves },
+      { detectMoves, remoteSeq: seq },
     );
+    report.stale = planned.flatMap((a) => (a.type === 'stale' ? [{ path: a.path, reason: a.reason }] : []));
+    const actions = planned.filter((a) => a.type !== 'stale');
     if (actions.length === 0) {
-      report.settled = true;
+      report.settled = report.stale.length === 0;
       break;
     }
     report.deferred = [];
@@ -298,6 +351,10 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
       try {
         await execute(action);
       } catch (error) {
+        if (error instanceof SyncStaleError) {
+          report.stale.push({ path: label, reason: 'older-rev' });
+          continue;
+        }
         if (error instanceof SyncPreconditionError) {
           report.deferred.push(label);
           if (action.type === 'move-remote' || action.type === 'move-local') detectMoves = false;
@@ -323,9 +380,14 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
           report.uploaded.push(action.path);
           return record(action.path, { hash: entry.hash, rev: entry.rev });
         }
+        case 'stale':
+          return;
         case 'download': {
           const got = await remote.get(action.path);
           if (!got) throw new SyncPreconditionError('vanished remotely');
+          // A body older than what we already agreed on (stale replica): never write it.
+          const known = base.get(action.path);
+          if (known && isOlderRev(got.entry.rev, known.rev)) throw new SyncStaleError();
           if (deps.hash(got.bytes) !== got.entry.hash) throw new Error(`Downloaded ${action.path} does not match its hash`);
           if (!(await local.write(action.path, got.bytes, action.expectLocal))) throw new SyncPreconditionError('changed locally');
           report.downloaded.push(action.path);
@@ -358,6 +420,8 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
           const got = await remote.get(action.path);
           const mine = await local.read(action.path);
           if (!got || !mine) throw new SyncPreconditionError('vanished');
+          const known = base.get(action.path);
+          if (known && isOlderRev(got.entry.rev, known.rev)) throw new SyncStaleError();
           if (deps.hash(got.bytes) !== got.entry.hash) throw new Error(`Downloaded ${action.path} does not match its hash`);
           if (mine.hash === got.entry.hash) return record(action.path, { hash: got.entry.hash, rev: got.entry.rev });
           // Keep ours first, then let theirs take the path (only if ours is still what we copied).
