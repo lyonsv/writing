@@ -40,7 +40,17 @@ export interface NativeTokenResponse {
   device: DeviceInfo;
 }
 
-/** The custom-scheme redirect for iOS (M6, expo-auth-session). */
+/** The hosted Margin server (production). Packaged desktop and release iOS builds use it by default. */
+export const PRODUCTION_SERVER_URL = 'https://margin-sync.vercel.app';
+/** `pnpm dev:server`. Development builds (unpackaged Electron, Expo dev) use it by default. */
+export const DEV_SERVER_URL = 'http://127.0.0.1:3000';
+
+/** Default sign-in/sync server: production for packaged/release builds, the local dev server otherwise. */
+export function defaultServerUrl(production: boolean): string {
+  return production ? PRODUCTION_SERVER_URL : DEV_SERVER_URL;
+}
+
+/** The custom-scheme redirect for iOS (M6, ASWebAuthenticationSession). */
 export const NATIVE_CUSTOM_SCHEME_REDIRECT = 'margin://auth/callback';
 
 /** What the desktop renderer may know about the account. The token never crosses into the renderer. */

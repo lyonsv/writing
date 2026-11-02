@@ -5,6 +5,7 @@ import os from 'node:os';
 
 import {
   IPC_CHANNELS,
+  defaultServerUrl,
   basename,
   displayName,
   type AppCommand,
@@ -46,7 +47,8 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_SHOW_INACTIVE   show the window without taking OS focus (automated tests)
  *   MARGIN_TEST_NO_HARDLINKS  simulate a filesystem without hard links (tests)
  *   MARGIN_TEST_LIST_LIMIT    cap the library listing at this many entries (tests)
- *   MARGIN_SERVER_URL      Margin server origin for sign-in (else settings.serverUrl, else http://127.0.0.1:3000)
+ *   MARGIN_SERVER_URL      Margin server origin for sign-in (else settings.serverUrl, else https://margin-sync.vercel.app
+ *                          when packaged, http://127.0.0.1:3000 in development)
  *   MARGIN_SYNC_INTERVAL_MS  sync timer (default 30000; tests)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
@@ -117,7 +119,8 @@ function createSync(): SyncService {
   });
 }
 
-export const DEFAULT_SERVER_URL = 'http://127.0.0.1:3000'; // matches pnpm dev:server and the dev OAuth callback
+// Packaged app: the production server. Development and tests (unpackaged): pnpm dev:server and the dev OAuth callback.
+export const DEFAULT_SERVER_URL = defaultServerUrl(app.isPackaged);
 const serverUrl = () => process.env.MARGIN_SERVER_URL || settings.get().serverUrl || DEFAULT_SERVER_URL;
 
 function createAccount(): AccountManager {
