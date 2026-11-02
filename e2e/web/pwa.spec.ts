@@ -21,9 +21,23 @@ const exportDir = path.resolve(import.meta.dirname, '../../apps/app/dist');
 let github: Awaited<ReturnType<typeof startMockGitHub>>;
 let server: Awaited<ReturnType<typeof startTestServer>>;
 
+/** Lets a test make the server fail (5xx) or hang when it serves the app shell. */
+let shellMode: 'ok' | 'error' | 'hang' = 'ok';
+
 test.beforeEach(async () => {
+  shellMode = 'ok';
   github = await startMockGitHub(OWNER);
-  server = await startTestServer(github, OWNER, {}, { web: webDir(exportDir) });
+  const files = webDir(exportDir);
+  server = await startTestServer(github, OWNER, {}, {
+    web: {
+      ...files,
+      shell: async () => {
+        if (shellMode === 'error') throw new Error('simulated server failure');
+        if (shellMode === 'hang') await new Promise((r) => setTimeout(r, 30_000));
+        return files.shell();
+      },
+    },
+  });
 });
 test.afterEach(async () => {
   await server.close();
@@ -213,4 +227,23 @@ test('a revoked browser: next check routes to sign-in and the cached shell no lo
   // Sign back in: the documents written before the revoke are still in this browser.
   await signIn(page);
   await expect.poll(() => editorText(page), { timeout: 15_000 }).toContain('kept after revoke');
+});
+
+test('a failing or hung server never locks a signed-in user out: the cached shell opens (only 401/403 remove it)', async ({ page }) => {
+  await signIn(page);
+  await page.waitForFunction(() => navigator.serviceWorker?.controller != null, undefined, { timeout: 10_000 });
+  await page.reload();
+  await expect(page.getByTestId('editor')).toBeVisible({ timeout: 20_000 });
+
+  shellMode = 'error'; // the server answers 500
+  await page.reload();
+  await expect(page.getByTestId('editor')).toBeVisible({ timeout: 20_000 });
+
+  shellMode = 'hang'; // the server doesn't answer: after ~4 s the cached shell shows
+  const started = Date.now();
+  await page.reload({ waitUntil: 'commit', timeout: 20_000 });
+  await expect(page.getByTestId('editor')).toBeVisible({ timeout: 20_000 });
+  expect(Date.now() - started).toBeLessThan(15_000);
+
+  shellMode = 'ok';
 });
