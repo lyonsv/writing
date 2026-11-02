@@ -43,6 +43,8 @@ export interface SidebarProps {
   showContextMenu?: (items: ContextMenuItem[]) => Promise<string | null>;
 }
 
+const KEEP_FOCUS_ON_SUBMIT = { submitBehavior: 'submit', blurOnSubmit: false } as Record<string, unknown>;
+
 type Action = 'open' | 'rename' | 'reveal' | 'trash' | 'new-document' | 'new-folder';
 
 /**
@@ -215,6 +217,12 @@ export function Sidebar(props: SidebarProps) {
                       selectTextOnFocus
                       value={renaming.value}
                       onChangeText={(value) => setRenaming({ ...renaming, value })}
+                      // Keep focus after Enter. By default react-native-web blurs a single-line input
+                      // one macrotask after submit; after an invalid name that late blur ran
+                      // commitRename (onBlur) on whatever had been typed since, committing a name
+                      // the user hadn't confirmed and closing the field (the flaky library e2e).
+                      // `blurOnSubmit` is what RNW reads; `submitBehavior` is the RN (iOS) spelling.
+                      {...KEEP_FOCUS_ON_SUBMIT}
                       onSubmitEditing={() => void commitRename()}
                       onBlur={() => void commitRename()}
                       onKeyPress={(e) => {

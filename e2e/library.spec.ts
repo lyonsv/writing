@@ -91,6 +91,13 @@ test('create documents and folders, rename inline, sort, and trash (never hard-d
   await page.getByTestId('library-rename-input').fill('.hidden');
   await page.getByTestId('library-rename-input').press('Enter');
   await expect(page.getByTestId('library-error')).toContainText('dot');
+  // Regression: react-native-web used to blur the field one macrotask after Enter, and that
+  // late blur committed whatever had been typed next (this test was flaky, ~1 in 10). The field
+  // must stay focused and open after an invalid name. (A fixed wait is the point here: we are
+  // checking that a delayed blur does *not* happen.)
+  await page.waitForTimeout(150);
+  await expect(page.getByTestId('library-rename-input')).toBeFocused();
+  await expect(page.getByTestId('library-rename-input')).toHaveValue('.hidden');
   await page.getByTestId('library-rename-input').fill('Alpha');
   await page.getByTestId('library-rename-input').press('Enter');
   await expect(row(page, 'Alpha.md')).toBeVisible();
