@@ -247,3 +247,36 @@ test('a failing or hung server never locks a signed-in user out: the cached shel
 
   shellMode = 'ok';
 });
+
+test('the "Sign in a new device?" form works in a real browser: the POST carries our Origin (no no-referrer)', async ({ page }) => {
+  // Production bug: Referrer-Policy: no-referrer makes browsers send Origin: null on this
+  // same-origin form POST, the CSRF check refuses it, and the owner sees "Sign-in expired".
+  const params = new URLSearchParams({
+    redirect_uri: 'http://127.0.0.1:53682/callback',
+    code_challenge: 'A'.repeat(43),
+    code_challenge_method: 'S256',
+    state: 'appstate-0123456789',
+    device_name: 'Mac',
+  });
+  const confirm = await page.goto(`${server.url}/api/auth/native/start?${params}`);
+  expect(confirm!.headers()['referrer-policy']).toBe('same-origin');
+  const toGitHub = page.waitForRequest((r) => r.url().startsWith(`${github.url}/login/oauth/authorize`), { timeout: 15_000 });
+  const post = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/api/auth/native/start'));
+  await page.getByRole('button', { name: 'Continue to GitHub' }).click();
+  const sent = await post;
+  expect(await sent.headerValue('origin')).toBe(server.url);
+  await toGitHub; // past the CSRF check; not "Sign-in expired"
+});
+
+test('Cancel on the "Sign in a new device?" page returns access_denied to the app (form-action allows the app redirect)', async ({ page }) => {
+  const params = new URLSearchParams({
+    redirect_uri: 'http://127.0.0.1:53682/callback',
+    code_challenge: 'A'.repeat(43),
+    code_challenge_method: 'S256',
+    state: 'appstate-0123456789',
+  });
+  await page.goto(`${server.url}/api/auth/native/start?${params}`);
+  const back = page.waitForRequest((r) => r.url().startsWith('http://127.0.0.1:53682/callback'), { timeout: 15_000 });
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  expect(new URL((await back).url()).searchParams.get('error')).toBe('access_denied');
+});

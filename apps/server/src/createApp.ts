@@ -95,6 +95,9 @@ export interface WebAsset {
  * The signed-in app shell's CSP: our own scripts only; inline styles for
  * react-native-web and CodeMirror; same-origin API calls; our service worker.
  */
+/** Every response's referrer policy (and vercel.json's); see the hardening middleware. */
+export const REFERRER_POLICY = 'same-origin';
+
 export const SHELL_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
   "connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
@@ -203,7 +206,10 @@ export function createApp(deps: AppDeps): Hono<Env> {
     // Static files set their own caching (dev/test only; the CDN serves them on Vercel).
     if (!c.res.headers.has('Cache-Control')) c.header('Cache-Control', 'no-store');
     c.header('X-Content-Type-Options', 'nosniff');
-    c.header('Referrer-Policy', 'no-referrer');
+    // same-origin, NOT no-referrer: under no-referrer browsers send `Origin: null` on our own
+    // form POSTs (the "Sign in a new device?" confirm page), which the CSRF check then refuses
+    // ("Sign-in expired", production bug). same-origin still sends nothing to GitHub or other sites.
+    c.header('Referrer-Policy', REFERRER_POLICY);
     c.header('X-Frame-Options', 'DENY');
     if (!c.res.headers.has('Content-Security-Policy')) {
       c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
@@ -353,7 +359,13 @@ export function createApp(deps: AppDeps): Hono<Env> {
     // Single use is enforced at the POST (UsedSet), so a captured confirm cookie can't be replayed.
     const sealed = sealer!.seal({ ru, cc, cs, dn, csrf, exp: now() + OAUTH_COOKIE_TTL_S * 1000 } satisfies PendingConfirm);
     setCookie(c, cookieNames().confirm, sealed, { ...cookieBase(), maxAge: OAUTH_COOKIE_TTL_S });
-    c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+    // form-action also governs where the form's response may REDIRECT (browsers enforce it on
+    // redirects): Continue → GitHub's authorize page, Cancel → back to the app's own redirect
+    // (validated above). 'self' alone blocked both in real browsers (production bug).
+    c.header(
+      'Content-Security-Policy',
+      `default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${new URL(getConfig().githubOAuthUrl).origin} ${new URL(ru).origin === 'null' ? `${new URL(ru).protocol}` : new URL(ru).origin}; frame-ancestors 'none'`,
+    );
     const name = escapeHtml(dn);
     return c.html(
       `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Sign in a new device?</title>` +
@@ -635,7 +647,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
     return c.json({ error: 'server_error' }, 500, {
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
-      'Referrer-Policy': 'no-referrer',
+      'Referrer-Policy': REFERRER_POLICY,
       'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
     });
   });

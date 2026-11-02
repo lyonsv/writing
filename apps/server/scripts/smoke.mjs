@@ -11,7 +11,9 @@
  *     a content-hashed JS bundle (immutable), apple-touch-icon.png, favicon.ico,
  *     manifest.webmanifest, sw.js (no-cache), and that the CDN caches them (x-vercel-cache);
  *   - /, /index.html and /api/me answer 401 (sign-in page / JSON), and the app shell isn't sent;
- *   - no HTML is in the public file list.
+ *   - no HTML is in the public file list;
+ *   - the native sign-in confirm page doesn't send Referrer-Policy: no-referrer
+ *     (its form POST would carry Origin: null and fail the CSRF check).
  * `--vercel-curl` sends every request through `vercel curl` (deployment-protection bypass).
  * Exit code 1 on any failure.
  */
@@ -97,6 +99,14 @@ if (bundle && /vercel\.app$|\.vercel\.app$/.test(new URL(origin).hostname)) {
 for (const path of ['/', '/index.html', '/settings']) {
   const r = await get(path);
   check(`GET ${path} signed out → 401 sign-in page, no app shell`, r.status === 401 && r.body.includes('margin-signin') && !r.body.includes('id="root"'), `status ${r.status}`);
+}
+// The confirm page must not use no-referrer: browsers would send Origin: null on its form POST
+// and the CSRF check would refuse every native sign-in (production bug).
+{
+  const q = new URLSearchParams({ redirect_uri: 'http://127.0.0.1:53682/callback', code_challenge: 'A'.repeat(43), code_challenge_method: 'S256', state: 'smoke-test-state-0001', device_name: 'smoke test' });
+  const r = await get(`/api/auth/native/start?${q}`);
+  const rp = r.headers['referrer-policy'] ?? 'none';
+  check('GET the "Sign in a new device?" page → 200, Referrer-Policy not no-referrer', r.status === 200 && !/no-referrer/i.test(rp), `status ${r.status}, referrer-policy: ${rp}`);
 }
 const me = await get('/api/me');
 check('GET /api/me signed out → 401 JSON', me.status === 401 && /unauthorized/.test(me.body), `status ${me.status}`);

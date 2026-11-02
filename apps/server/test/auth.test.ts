@@ -1,5 +1,6 @@
 import { NATIVE_CUSTOM_SCHEME_REDIRECT } from '@margin/core';
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
@@ -838,7 +839,26 @@ describe('hygiene', () => {
     const h = setup();
     const res = await h.req('/api/me');
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
-    expect(res.headers.get('Referrer-Policy')).toBe('no-referrer');
+    // same-origin: no-referrer would make browsers send Origin: null on the confirm form (production bug).
+    expect(res.headers.get('Referrer-Policy')).toBe('same-origin');
     expect(res.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
+  });
+});
+
+describe('referrer policy (production bug: Origin: null on the confirm form)', () => {
+  it('no response, and no vercel.json header, uses no-referrer; the confirm page is same-origin', async () => {
+    const vercel = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')) as {
+      headers?: Array<{ source: string; headers: Array<{ key: string; value: string }> }>;
+    };
+    for (const rule of vercel.headers ?? []) {
+      for (const hd of rule.headers) if (hd.key.toLowerCase() === 'referrer-policy') expect(hd.value, rule.source).toBe('same-origin');
+    }
+    const h = setup();
+    const confirm = await h.req(
+      `/api/auth/native/start?${new URLSearchParams({ redirect_uri: LOOPBACK, code_challenge: s256(newVerifier()), code_challenge_method: 'S256', state: 'appstate-0123456789' })}`,
+    );
+    expect(confirm.status).toBe(200);
+    expect(confirm.headers.get('Referrer-Policy')).toBe('same-origin');
+    for (const p of ['/api/me', '/nope', '/api/auth/web/start']) expect((await h.req(p)).headers.get('Referrer-Policy'), p).not.toBe('no-referrer');
   });
 });
