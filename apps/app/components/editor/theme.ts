@@ -68,10 +68,14 @@ export const marginTheme = EditorView.theme({
  * Subtle markdown styling: content keeps the text colour and size; syntax
  * markers (`#`, `*`, `>`, `-`, backticks, link brackets) are dimmed.
  * `processingInstruction` is what @lezer/markdown assigns to those marks.
+ *
+ * Order matters: lang-markdown tags whole blocks with inheriting tags
+ * (`Blockquote/...` → quote, `Link/...` → link), so a `>` or `[` span carries
+ * both the parent class and the mark class at equal specificity. The marker
+ * rule therefore comes last so it wins.
  */
 export const marginHighlight = syntaxHighlighting(
   HighlightStyle.define([
-    { tag: t.processingInstruction, color: 'var(--margin-muted)' },
     { tag: t.heading, fontWeight: '700' },
     { tag: t.strong, fontWeight: '700' },
     { tag: t.emphasis, fontStyle: 'italic' },
@@ -81,5 +85,6 @@ export const marginHighlight = syntaxHighlighting(
     { tag: t.monospace, backgroundColor: 'var(--margin-code-bg)', borderRadius: '3px' },
     { tag: t.contentSeparator, color: 'var(--margin-muted)' },
     { tag: t.meta, color: 'var(--margin-muted)' },
+    { tag: t.processingInstruction, color: 'var(--margin-muted)' },
   ]),
 );

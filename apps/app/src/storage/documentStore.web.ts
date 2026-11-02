@@ -1,6 +1,6 @@
 import { DESKTOP_BRIDGE_KEY, type DesktopBridge, type DocumentStore } from '@margin/core';
 
-import { createDesktopStore } from './desktopStore';
+import { desktopBackend, storeBackend, type DocumentBackend } from './documentBackend';
 import { createLocalStorageStore } from './localStorageStore';
 
 /**
@@ -13,11 +13,22 @@ export function getDesktopBridge(): DesktopBridge | undefined {
 }
 
 let store: DocumentStore | undefined;
+let backend: DocumentBackend | undefined;
 
+/** Library-level access (list/rename/delete…). */
 export function getDocumentStore(): DocumentStore {
   if (!store) {
     const bridge = getDesktopBridge();
-    store = bridge ? createDesktopStore(bridge) : createLocalStorageStore();
+    store = bridge ? bridge.store : createLocalStorageStore();
   }
   return store;
+}
+
+/** Open-document access (save pipeline). */
+export function getDocumentBackend(): DocumentBackend {
+  if (!backend) {
+    const bridge = getDesktopBridge();
+    backend = bridge ? desktopBackend(bridge) : storeBackend(getDocumentStore());
+  }
+  return backend;
 }

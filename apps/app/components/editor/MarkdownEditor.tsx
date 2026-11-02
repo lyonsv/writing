@@ -2,28 +2,47 @@
 
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { EditorState } from '@codemirror/state';
+import { Annotation, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, drawSelection, keymap, placeholder } from '@codemirror/view';
+import { FLUSH_EVENT } from '@margin/core';
 import type { DOMProps } from 'expo/dom';
 import { useEffect, useRef, type CSSProperties } from 'react';
 
 import { fontFaceCss } from './fonts';
 import { EDITOR_CSS_VARS, marginHighlight, marginTheme } from './theme';
 
+export interface ExternalContent {
+  text: string;
+  /** Changes whenever new external content should be considered. */
+  token: string;
+}
+
 export interface MarkdownEditorProps {
   /** Text shown at mount. Later changes are ignored; remount (via `key`) to load another document. */
   initialValue: string;
   /**
-   * Called with the full text, debounced while typing and flushed on blur.
+   * Called with the full text, debounced while typing and flushed immediately on
+   * blur, window blur, page hide, unload and the `FLUSH_EVENT` window event.
    * Must be async: in a native WebView this crosses the DOM-component bridge.
    */
   onChange: (text: string) => Promise<void>;
+  /**
+   * Content changed outside the app. Applied only if the editor has no
+   * unflushed edits; otherwise the edits are flushed instead (and the save
+   * pipeline turns them into a conflict copy). The outcome is reported via
+   * `onExternalResult`.
+   */
+  external?: ExternalContent | null;
+  onExternalResult?: (token: string, applied: boolean) => Promise<void>;
   /** Debounce interval in ms. */
   debounceMs?: number;
   dom?: DOMProps;
 }
 
 const STYLE_ID = 'margin-editor-vars';
+
+/** Marks transactions that load external content, so they aren't echoed back as edits. */
+const externalLoad = Annotation.define<boolean>();
 
 function ensureGlobalStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
@@ -38,10 +57,21 @@ function isDesktopShell(): boolean {
   return typeof window !== 'undefined' && 'marginDesktop' in window;
 }
 
-export default function MarkdownEditor({ initialValue, onChange, debounceMs = 300 }: MarkdownEditorProps) {
+export default function MarkdownEditor({
+  initialValue,
+  onChange,
+  external,
+  onExternalResult,
+  debounceMs = 300,
+}: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const pendingRef = useRef<string | null>(null);
+  const flushRef = useRef<() => void>(() => undefined);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onExternalResultRef = useRef(onExternalResult);
+  onExternalResultRef.current = onExternalResult;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -49,15 +79,16 @@ export default function MarkdownEditor({ initialValue, onChange, debounceMs = 30
     ensureGlobalStyles();
 
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let pending: string | null = null;
     const flush = () => {
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
-      if (pending === null) return;
-      const text = pending;
-      pending = null;
+      const text = pendingRef.current;
+      if (text === null) return;
+      pendingRef.current = null;
+      // Called synchronously so a flush handler can await the resulting save.
       void onChangeRef.current(text);
     };
+    flushRef.current = flush;
 
     const view = new EditorView({
       parent: host,
@@ -80,7 +111,8 @@ export default function MarkdownEditor({ initialValue, onChange, debounceMs = 30
           keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
-            pending = update.state.doc.toString();
+            if (update.transactions.every((tr) => tr.annotation(externalLoad))) return;
+            pendingRef.current = update.state.doc.toString();
             if (timer !== undefined) clearTimeout(timer);
             timer = setTimeout(flush, debounceMs);
           }),
@@ -88,19 +120,52 @@ export default function MarkdownEditor({ initialValue, onChange, debounceMs = 30
         ],
       }),
     });
+    viewRef.current = view;
     view.focus();
 
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener(FLUSH_EVENT, flush);
+    window.addEventListener('blur', flush);
+    window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
-    document.addEventListener('visibilitychange', flush);
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      window.removeEventListener(FLUSH_EVENT, flush);
+      window.removeEventListener('blur', flush);
+      window.removeEventListener('pagehide', flush);
       window.removeEventListener('beforeunload', flush);
-      document.removeEventListener('visibilitychange', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
       flush();
+      viewRef.current = null;
       view.destroy();
     };
     // initialValue is intentionally read once at mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debounceMs]);
+
+  const lastExternalToken = useRef<string | null>(null);
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!external || !view || external.token === lastExternalToken.current) return;
+    lastExternalToken.current = external.token;
+    if (pendingRef.current !== null) {
+      // Unsaved edits win locally; push them so the save pipeline keeps both copies.
+      flushRef.current();
+      void onExternalResultRef.current?.(external.token, false);
+      return;
+    }
+    if (view.state.doc.toString() !== external.text) {
+      const head = Math.min(view.state.selection.main.head, external.text.length);
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: external.text },
+        selection: EditorSelection.cursor(head),
+        annotations: [externalLoad.of(true)],
+      });
+    }
+    void onExternalResultRef.current?.(external.token, true);
+  }, [external]);
 
   return (
     <div style={{ position: 'relative', height: '100%', width: '100%', background: 'var(--margin-bg)' }}>
