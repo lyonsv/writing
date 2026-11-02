@@ -420,6 +420,9 @@ export class NativeLibrary implements DocumentStore {
     const [first, second] = [srcKey, dstKey].sort() as [string, string];
     await this.queue.run(first, () =>
       this.queue.run(second, async () => {
+        // Re-check under the locks: the source may have gone (deleted, or moved by sync) meanwhile.
+        const now = await this.fs.stat(this.abs(srcKey));
+        if (!now || now.kind !== st.kind) throw new DocumentStoreError('not-found', `No such path ${from}`);
         if (options.expectHash !== undefined) {
           const disk = st.kind === 'file' ? await this.diskHash(srcKey) : null;
           if (disk?.hash !== options.expectHash) throw new DocumentStoreError('changed', `${from} changed`);
@@ -560,14 +563,18 @@ export class NativeLibrary implements DocumentStore {
   /** Current hash of a document, cached by size + mtime (we are the only writer; every mutation drops the entry). */
   async hashForSync(relative: string): Promise<{ hash: string; size: number } | null> {
     const key = this.key(relative);
-    const st = await this.fs.stat(this.abs(key));
-    if (!st || st.kind !== 'file') return null;
-    const cached = this.hashCache.get(key);
-    if (cached && cached.size === st.size && cached.modifiedAt === st.modifiedAt) return { hash: cached.hash, size: st.size };
-    const bytes = await this.fs.readBytes(this.abs(key));
-    const hash = sha256Hex(bytes);
-    this.hashCache.set(key, { size: st.size, modifiedAt: st.modifiedAt, hash });
-    return { hash, size: bytes.length };
+    // In the path's queue, so a save, delete or rename can't land between the stat and the read.
+    return this.queue.run(key, async () => {
+      const st = await this.fs.stat(this.abs(key));
+      if (!st || st.kind !== 'file') return null;
+      const cached = this.hashCache.get(key);
+      if (cached && cached.size === st.size && cached.modifiedAt === st.modifiedAt) return { hash: cached.hash, size: st.size };
+      const bytes = await this.bytesOrNull(key);
+      if (!bytes) return null;
+      const hash = sha256Hex(bytes);
+      this.hashCache.set(key, { size: st.size, modifiedAt: st.modifiedAt, hash });
+      return { hash, size: bytes.length };
+    });
   }
 
   forgetHash(relative: string): void {
