@@ -80,3 +80,8 @@ export function isWithin(parent: string, child: string): boolean {
   if (parent === '') return true;
   return child === parent || child.startsWith(`${parent}/`);
 }
+
+/** True if any segment starts with `.` (hidden files and folders). */
+export function isHiddenPath(path: string): boolean {
+  return path.split('/').some((segment) => segment.startsWith('.'));
+}
