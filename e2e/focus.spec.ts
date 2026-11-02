@@ -314,3 +314,25 @@ test('typewriter: a click re-centres the caret line after mouseup (smooth, or in
   expect(Math.abs(await caretOffset())).toBeLessThan(20);
   await quitAndWait(app);
 });
+
+test('focus mode hides the macOS traffic lights (windowed), and shows them again after', async () => {
+  const { app } = await open(DOC);
+  // Electron has no getter for button visibility, so record what main asks for.
+  await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0]!;
+    const g = globalThis as unknown as { __buttons: boolean[] };
+    g.__buttons = [];
+    const original = win.setWindowButtonVisibility.bind(win);
+    win.setWindowButtonVisibility = (visible: boolean) => {
+      g.__buttons.push(visible);
+      original(visible);
+    };
+  });
+  const calls = () => app.evaluate(() => (globalThis as unknown as { __buttons: boolean[] }).__buttons);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFullScreen())).toBe(false);
+  await clickMenu(app, 'focus-mode');
+  await expect.poll(calls).toEqual([false]);
+  await clickMenu(app, 'focus-mode');
+  await expect.poll(calls).toEqual([false, true]);
+  await quitAndWait(app);
+});
