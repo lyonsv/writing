@@ -13,3 +13,4 @@ playwright-report/
 apps/app/dist/
 apps/desktop/release/
 *.tsbuildinfo
+.vercel

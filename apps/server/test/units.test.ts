@@ -1,4 +1,4 @@
-import { BlobPreconditionFailedError } from '@vercel/blob';
+import { BlobError, BlobNotFoundError, BlobPreconditionFailedError } from '@vercel/blob';
 import { describe, expect, it } from 'vitest';
 
 import { BlobStore, type BlobClient } from '../src/blobStore';
@@ -40,6 +40,18 @@ describe('config', () => {
     ]) {
       expect(() => loadConfig({ ...ENV, ...patch }), JSON.stringify(patch)).toThrow(ConfigError);
     }
+  });
+
+  it('derives PUBLIC_URL from VERCEL_URL on previews only', () => {
+    const { PUBLIC_URL: _drop, ...rest } = ENV;
+    expect(loadConfig({ ...rest, VERCEL_ENV: 'preview', VERCEL_URL: 'margin-sync-abc123.vercel.app' }).publicUrl.origin).toBe(
+      'https://margin-sync-abc123.vercel.app',
+    );
+    expect(() => loadConfig({ ...rest, VERCEL_ENV: 'production', VERCEL_URL: 'margin-sync-abc123.vercel.app' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...rest, VERCEL_ENV: 'preview', VERCEL_URL: 'evil.example/x?' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ...rest })).toThrow(ConfigError);
+    // An explicit PUBLIC_URL always wins.
+    expect(loadConfig({ ...ENV, VERCEL_ENV: 'preview', VERCEL_URL: 'x.vercel.app' }).publicUrl.origin).toBe('https://margin.example.com');
   });
 
   it('allows plain http only on loopback, without Secure cookies', () => {
@@ -152,6 +164,55 @@ describe('BlobStore', () => {
     expect(calls[1]!.args[2]).toMatchObject({ allowOverwrite: false });
     expect((calls[1]!.args[2] as Record<string, unknown>).ifMatch).toBeUndefined();
     await expect(s.put('k', 'v', { ifMatch: '"stale"' })).rejects.toBeInstanceOf(PreconditionFailedError);
+  });
+
+  it('maps real Blob conditional failures (generic BlobErrors) to PreconditionFailedError by checking the key', async () => {
+    const make = (exists: boolean) =>
+      new BlobStore({
+        put: async () => {
+          throw new BlobError(exists ? 'This blob already exists' : 'The specified key does not exist.');
+        },
+        head: async () => {
+          if (!exists) throw new BlobNotFoundError();
+          return { etag: '"e"' };
+        },
+      } as unknown as BlobClient);
+    // create-only on an existing key (observed on real Blob)
+    await expect(make(true).put('k', 'v', { create: true })).rejects.toBeInstanceOf(PreconditionFailedError);
+    // ifMatch on a deleted key (observed on real Blob)
+    await expect(make(false).put('k', 'v', { ifMatch: '"e"' })).rejects.toBeInstanceOf(PreconditionFailedError);
+    await expect(make(false).putBytes('k', new Uint8Array([1]), { ifMatch: '"e"' })).rejects.toBeInstanceOf(PreconditionFailedError);
+    // A losing concurrent write ("conflicting operation"): the key moved on to another ETag.
+    const moved = new BlobStore({
+      put: async () => {
+        throw new BlobError('The conditional request cannot succeed due to a conflicting operation against this resource.');
+      },
+      head: async () => ({ etag: '"winner"' }),
+    } as unknown as BlobClient);
+    await expect(moved.put('k', 'v', { ifMatch: '"e"' })).rejects.toBeInstanceOf(PreconditionFailedError);
+    // Errors that don't contradict the condition are real errors (ifMatch "e" still current).
+    await expect(make(false).put('k', 'v', { create: true })).rejects.toBeInstanceOf(BlobError);
+    await expect(make(false).put('k', 'v', { create: true })).rejects.not.toBeInstanceOf(PreconditionFailedError);
+    await expect(make(true).put('k', 'v')).rejects.not.toBeInstanceOf(PreconditionFailedError);
+    await expect(make(true).put('k', 'v', { ifMatch: '"e"' })).rejects.not.toBeInstanceOf(PreconditionFailedError);
+  });
+
+  it('MemoryStore ETags are content-derived, like real Blob', async () => {
+    const { MemoryStore } = await import('../src/store');
+    const m = new MemoryStore();
+    const a = await m.put('k', 'same');
+    const b = await m.put('k', 'other');
+    const c = await m.put('k', 'same');
+    expect(a.etag).toBe(c.etag);
+    expect(a.etag).not.toBe(b.etag);
+  });
+
+  it('normalises weak ETags from get() (real Blob, compressed responses) so CAS can match', async () => {
+    const s = new BlobStore({
+      get: async () => ({ statusCode: 200, stream: new Response('{"big":1}').body, headers: new Headers(), blob: { etag: 'W/"abc"' } }),
+    } as unknown as BlobClient);
+    expect((await s.get('k'))!.etag).toBe('"abc"');
+    expect((await s.getBytes('k'))!.etag).toBe('"abc"');
   });
 
   it('lists across pages', async () => {

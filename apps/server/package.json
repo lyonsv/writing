@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/dev.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify:blob": "tsx scripts/verify-blob.ts"
   },
   "dependencies": {
     "@vercel/blob": "2.8.2",

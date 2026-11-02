@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * Minimal key/value storage with ETags, implemented by Vercel Blob (private
  * store) in production and by `MemoryStore` in tests and local dev. M5 reuses
@@ -9,7 +11,9 @@
  *   throws `PreconditionFailedError`. Callers must not rely on what `ifMatch`
  *   does for a key that doesn't exist (Blob doesn't document it).
  * - `put` with `create: true` never overwrites an existing key.
- * - Every successful write produces a new ETag.
+ * - ETags are derived from the content (as on real Blob): writing identical
+ *   bytes again gives the same ETag. CAS users must therefore never let a key
+ *   return to an earlier value (ours always change a counter or timestamp).
  */
 export interface StoredItem {
   value: string;
@@ -49,7 +53,6 @@ export class PreconditionFailedError extends Error {
  */
 export class MemoryStore implements KeyValueStore {
   private readonly items = new Map<string, StoredItem & { bytes?: Uint8Array }>();
-  private seq = 0;
 
   async get(key: string): Promise<StoredItem | null> {
     await Promise.resolve();
@@ -62,7 +65,8 @@ export class MemoryStore implements KeyValueStore {
     const current = this.items.get(key);
     if (options.create && current) throw new PreconditionFailedError();
     if (options.ifMatch !== undefined && current?.etag !== options.ifMatch) throw new PreconditionFailedError();
-    const etag = `"m${++this.seq}"`;
+    // Content-derived, like real Blob (verified): same bytes → same ETag.
+    const etag = `"${createHash('sha256').update(value).digest('hex').slice(0, 32)}"`;
     this.items.set(key, { value, etag });
     return { etag };
   }
@@ -80,7 +84,8 @@ export class MemoryStore implements KeyValueStore {
   }
 
   async putBytes(key: string, bytes: Uint8Array, options: PutOptions = {}): Promise<{ etag: string }> {
-    const { etag } = await this.put(key, '', options);
+    await this.put(key, '', options); // precondition checks
+    const etag = `"${createHash('sha256').update(bytes).digest('hex').slice(0, 32)}"`;
     this.items.set(key, { value: '', etag, bytes: bytes.slice() });
     return { etag };
   }

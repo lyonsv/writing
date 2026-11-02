@@ -58,3 +58,21 @@ Device tokens must be revocable, expire, and survive across serverless instances
 - **Stored hashes are peppered.** `tokenHash`, the code keys (`auth/codes/<…>.json`) and the OAuth state nonce keys (`auth/states/<…>.json`) are now **HMAC-SHA256** under a key derived from `AUTH_SECRET` (HKDF, label `token-hash v1`, separate from the cookie key), not plain SHA-256. Someone holding only a leaked Blob read-write token could otherwise write `auth/devices/<id>.json` with the SHA-256 of a secret they chose and mint a working device token, or plant a one-time code. Without `AUTH_SECRET` they can't compute a matching MAC. Tests mint such records directly in the store and expect 401/400.
 - **Migration:** none needed; nothing was deployed with the unpeppered scheme. Had there been records, they'd simply stop matching (users sign in again).
 - **Rotating `AUTH_SECRET`** now signs out **every** device and web session, and cancels sign-ins and codes in flight, because no stored MAC matches under the new key. That is the intended "log everyone out" lever. There is no dual-key grace period; add `AUTH_SECRET_PREVIOUS` (try both keys, rewrite on use) if rotation ever needs to be seamless. Rotate when the secret may have leaked, together with the Blob token if that leaked too.
+
+## Amendments (2026-11-02, verified against the real private Blob store)
+`pnpm --filter @margin/server verify:blob` (`apps/server/scripts/verify-blob.ts`) runs the store assumptions against the real `margin-store` under a throwaway prefix, which is deleted afterwards. It found four mismatches with what this ADR assumed; all are fixed and covered by unit tests:
+1. **ETags are content-derived:** rewriting identical bytes gives the same ETag. The claim "every successful write produces a new ETag" was false. CAS here stays safe because no CAS user ever writes a key back to an earlier value: device touches and revocations change timestamps, mark-used adds `usedAt`, and the sync manifest bumps `seq`. `MemoryStore` now uses content-derived ETags too.
+2. **Create-only on an existing key** fails with a plain `BlobError` ("This blob already exists"), not `BlobPreconditionFailedError`.
+3. **ifMatch on a deleted key** fails with a plain `BlobError` ("The specified key does not exist") and creates nothing. Good, and still not relied on.
+4. **A losing concurrent conditional write** can fail with a plain `BlobError` ("…conflicting operation…").
+
+`BlobStore` therefore classifies a failed conditional write **by state, not message**: it reads the key's ETag with `head()`, and if that contradicts the condition (present for create; missing or different for ifMatch) it raises `PreconditionFailedError`, which callers retry or report as 412.
+
+5. **`get()` returns weak ETags (`W/"…"`) for compressed responses (larger JSON), but conditional writes only match the strong form.** Every CAS on such a key failed forever. In practice the sync manifest stalled once it grew beyond a few KB. `BlobStore` now normalises ETags to the strong form.
+
+Also confirmed:
+- 10 concurrent ifMatch puts → exactly one winner, 9 precondition failures.
+- 10 concurrent create-only puts → exactly one winner.
+- `useCache: false` reads return the latest write 10/10 times (~150 ms).
+- Blob URLs and download URLs return 403 without credentials, and a wrong token fails.
+- Deleting a missing key succeeds silently; `del` with a stale ifMatch is refused.

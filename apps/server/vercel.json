@@ -1,4 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "fluid": true
+  "framework": "hono",
+  "fluid": true,
+  "regions": ["iad1"]
 }

@@ -102,8 +102,15 @@ export class SyncRepository {
   }
 
   /** Applies `mutate` to the latest manifest with compare-and-swap, retrying on contention. */
+  /**
+   * Each CAS round lets at least one writer through, so N concurrent writers
+   * need at most N rounds. On real Blob a round is ~300 ms, so we retry with
+   * capped exponential backoff plus jitter for up to ~25 s (well within a
+   * Function's duration) rather than a fixed small number of attempts.
+   */
   private async update<T>(mutate: (m: Manifest) => T): Promise<T> {
-    for (let attempt = 0; attempt < 20; attempt++) {
+    const deadline = this.now() + 25_000;
+    for (let attempt = 0; attempt < 200 && (attempt === 0 || Date.now() < deadline); attempt++) {
       const { manifest, etag } = await this.read();
       const result = mutate(manifest); // throws SyncConflictError on a failed precondition
       this.prune(manifest);
@@ -114,7 +121,8 @@ export class SyncRepository {
         return result;
       } catch (error) {
         if (!(error instanceof PreconditionFailedError)) throw error;
-        await new Promise((r) => setTimeout(r, Math.random() * 20 * (attempt + 1)));
+        const cap = Math.min(1_000, 25 * 2 ** Math.min(attempt, 6));
+        await new Promise((r) => setTimeout(r, cap / 2 + Math.random() * cap));
       }
     }
     throw new Error('sync manifest is too contended');

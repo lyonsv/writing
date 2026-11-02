@@ -1,4 +1,4 @@
-import { BlobPreconditionFailedError, del, get, list, put } from '@vercel/blob';
+import { BlobNotFoundError, BlobPreconditionFailedError, del, get, head, list, put } from '@vercel/blob';
 
 import { PreconditionFailedError, type KeyValueStore, type PutOptions, type StoredItem } from './store';
 
@@ -8,9 +8,21 @@ export interface BlobClient {
   put: typeof put;
   del: typeof del;
   list: typeof list;
+  head: typeof head;
 }
 
-const realClient: BlobClient = { get, put, del, list };
+const realClient: BlobClient = { get, put, del, list, head };
+
+/**
+ * Real Blob's `get()` returns a *weak* ETag (`W/"…"`) once a response is served
+ * compressed (larger JSON), but conditional `put`/`del` only match the strong
+ * form, so a weak ETag can never win a compare-and-swap. Found with
+ * `verify:blob`: the sync manifest's CAS starved as soon as it grew. Same
+ * validator either way, so we drop the `W/`.
+ */
+export function strongEtag(etag: string): string {
+  return etag.startsWith('W/') ? etag.slice(2) : etag;
+}
 
 /**
  * `KeyValueStore` on a **private** Vercel Blob store. On Vercel the SDK
@@ -31,7 +43,42 @@ export class BlobStore implements KeyValueStore {
     const result = await this.client.get(key, { access: 'private', useCache: false });
     if (!result || result.statusCode !== 200) return null;
     const value = await new Response(result.stream).text();
-    return { value, etag: result.blob.etag };
+    return { value, etag: strongEtag(result.blob.etag) };
+  }
+
+  /**
+   * Real Blob reports several conditional-write failures as plain `BlobError`s
+   * (verified with `pnpm --filter @margin/server verify:blob`; ADR 0012
+   * amendments): create-only on an existing key ("This blob already exists"),
+   * ifMatch on a missing key ("The specified key does not exist"), and a losing
+   * concurrent conditional write ("The conditional request cannot succeed due
+   * to a conflicting operation"). Callers retry on PreconditionFailedError, so
+   * we classify by *state*, not by message: after a failed conditional write we
+   * read the key's ETag. If it contradicts the condition (present for create;
+   * missing or different for ifMatch), it's a PreconditionFailedError. If the
+   * key still satisfies the condition after a short re-check, the error was
+   * something else and is rethrown.
+   */
+  private async conditionalFailure(key: string, options: PutOptions, error: unknown): Promise<never> {
+    if (error instanceof BlobPreconditionFailedError) throw new PreconditionFailedError();
+    if (!options.create && options.ifMatch === undefined) throw error;
+    for (let check = 0; check < 3; check++) {
+      if (check > 0) await new Promise((r) => setTimeout(r, 100 * check));
+      const etag = await this.currentEtag(key);
+      const contradicts = options.create ? etag !== null : etag === null || etag !== options.ifMatch;
+      if (contradicts) throw new PreconditionFailedError();
+    }
+    throw error;
+  }
+
+  /** The key's current ETag, or null if it doesn't exist. */
+  private async currentEtag(key: string): Promise<string | null> {
+    try {
+      return strongEtag((await this.client.head(key)).etag);
+    } catch (error) {
+      if (error instanceof BlobNotFoundError) return null;
+      throw error;
+    }
   }
 
   async put(key: string, value: string, options: PutOptions = {}): Promise<{ etag: string }> {
@@ -46,15 +93,14 @@ export class BlobStore implements KeyValueStore {
       });
       return { etag: result.etag };
     } catch (error) {
-      if (error instanceof BlobPreconditionFailedError) throw new PreconditionFailedError();
-      throw error;
+      return this.conditionalFailure(key, options, error);
     }
   }
 
   async getBytes(key: string): Promise<{ bytes: Uint8Array; etag: string } | null> {
     const result = await this.client.get(key, { access: 'private', useCache: false });
     if (!result || result.statusCode !== 200) return null;
-    return { bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()), etag: result.blob.etag };
+    return { bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()), etag: strongEtag(result.blob.etag) };
   }
 
   async putBytes(key: string, bytes: Uint8Array, options: PutOptions = {}): Promise<{ etag: string }> {
@@ -69,8 +115,7 @@ export class BlobStore implements KeyValueStore {
       });
       return { etag: result.etag };
     } catch (error) {
-      if (error instanceof BlobPreconditionFailedError) throw new PreconditionFailedError();
-      throw error;
+      return this.conditionalFailure(key, options, error);
     }
   }
 

@@ -67,8 +67,22 @@ function httpsOrLoopback(raw: string, name: string): URL {
   return url;
 }
 
+/**
+ * `PUBLIC_URL`, or, on a Vercel **preview** deployment only, `https://$VERCEL_URL`
+ * (the deployment's own URL, set by Vercel). Production never falls back: it
+ * must be configured (`https://margin-sync.vercel.app`), so a missing value
+ * fails closed. GitHub sign-in on a preview additionally needs an OAuth App
+ * whose callback matches that URL (docs/server-setup.md).
+ */
+function publicUrlFrom(env: Record<string, string | undefined>): string {
+  const explicit = env.PUBLIC_URL?.trim();
+  if (explicit) return explicit;
+  if (env.VERCEL_ENV === 'preview' && env.VERCEL_URL && /^[a-z0-9.-]+$/i.test(env.VERCEL_URL)) return `https://${env.VERCEL_URL}`;
+  throw new ConfigError('PUBLIC_URL is not set');
+}
+
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
-  const publicUrl = httpsOrLoopback(required(env, 'PUBLIC_URL'), 'PUBLIC_URL');
+  const publicUrl = httpsOrLoopback(publicUrlFrom(env), 'PUBLIC_URL');
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username) {
     throw new ConfigError('PUBLIC_URL must be an origin only, e.g. https://margin.example.com');
   }

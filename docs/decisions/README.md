@@ -17,3 +17,4 @@ One file per decision: `NNNN-title.md` with **Status**, **Context**, **Decision*
 | [0011](0011-native-redirect.md) | Native sign-in: loopback redirect on desktop, `margin://` on iOS | Accepted |
 | [0012](0012-token-storage.md) | Token storage: hashed device records in private Vercel Blob; `safeStorage` on desktop (amended: HMAC pepper) | Accepted |
 | [0013](0013-sync.md) | Sync: manifest CAS on private Blob, three-way engine in core, guarded desktop client | Accepted |
+| [0014](0014-vercel-deploy.md) | Vercel deployment: project settings, `vercel.json`, environments, protection | Accepted |
