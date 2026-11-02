@@ -2,7 +2,7 @@
 // and it launches, opens the default document and quits cleanly on SIGTERM.
 // Playwright can't attach to the fused binary, so this is a black-box check.
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,13 +42,15 @@ const child = spawn(path.join(appPath, 'Contents/MacOS/Margin'), [], {
   env: { ...process.env, MARGIN_LIBRARY_DIR: lib, MARGIN_USER_DATA_DIR: ud, MARGIN_SHOW_INACTIVE: '1' },
   stdio: 'inherit',
 });
-const doc = path.join(lib, 'Untitled.md');
+// An empty library gets a new date-named document on first launch (ADR 0008).
+const firstDoc = () => readdirSync(lib).find((f) => f.endsWith('.md'));
 const start = Date.now();
-while (!existsSync(doc) && Date.now() - start < 30_000) await new Promise((r) => setTimeout(r, 250));
-if (!existsSync(doc)) {
+while (!firstDoc() && Date.now() - start < 30_000) await new Promise((r) => setTimeout(r, 250));
+if (!firstDoc()) {
   child.kill('SIGKILL');
-  throw new Error('Packaged app did not open Untitled.md within 30s');
+  throw new Error('Packaged app did not create its first document within 30s');
 }
+const doc = path.join(lib, firstDoc());
 console.log(`packaged app opened ${doc} (${JSON.stringify(readFileSync(doc, 'utf8'))})`);
 const exit = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
 child.kill('SIGTERM');

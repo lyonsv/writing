@@ -11,3 +11,5 @@ One file per decision: `NNNN-title.md` with **Status**, **Context**, **Decision*
 | [0005](0005-no-rust-no-xcode.md) | No Rust or Xcode: Electron on desktop, Expo Go / EAS on iOS | Accepted |
 | [0006](0006-save-pipeline.md) | Save pipeline: durability, write queue, external changes and conflicts | Accepted |
 | [0007](0007-focus-mode.md) | Focus mode: dimming, typewriter scrolling, settings | Accepted |
+| [0008](0008-library-model.md) | Library model: folder tree, operations, watching, first document | Accepted |
+| [0009](0009-library-ui.md) | Library UI: sidebar, quick open, shortcuts | Accepted |

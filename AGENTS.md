@@ -31,7 +31,7 @@ Run everything from the repo root (Node >= 22, pnpm 10).
 | `pnpm verify:packaged` | Checks the packaged `Margin.app`: Electron fuses are set, it launches, opens the document and quits cleanly. Run after `pnpm build:desktop`. |
 | `pnpm --filter @margin/desktop package` | Full dmg + zip (unsigned). |
 
-Keyboard shortcuts (View menu on desktop; bound in the editor itself elsewhere): Focus Mode ⇧⌘F · Focus on Sentence ⌥⌘1 / Paragraph ⌥⌘2 / Nothing ⌥⌘0 · Typewriter Scrolling ⌥⌘T · Full Screen ⌃⌘F. See ADR 0007.
+Keyboard shortcuts (desktop menus; bound in the editor itself elsewhere): New Document ⌘N · New Folder ⇧⌘N · Quick Open ⌘P · Show Library ⌘\ · Focus Mode ⇧⌘F · Focus on Sentence ⌥⌘1 / Paragraph ⌥⌘2 / Nothing ⌥⌘0 · Typewriter Scrolling ⌥⌘T · Full Screen ⌃⌘F. See ADRs 0007 and 0009.
 
 Desktop env overrides (see `.env.example`): `MARGIN_LIBRARY_DIR` (default `~/Documents/Margin`), `MARGIN_USER_DATA_DIR`, `MARGIN_WEB_DIR`, `MARGIN_DEV_SERVER_URL` (dev mode), `MARGIN_SHOW_INACTIVE` (don't steal OS focus; used by tests).
 
@@ -40,10 +40,13 @@ Add Expo packages with `pnpm --filter @margin/app exec expo install <pkg>` so ve
 ## Layout
 ```
 apps/app/                 Expo SDK 58 + Expo Router (iOS + web)
-  app/                    routes (_layout.tsx, index.tsx = the single-document screen)
+  app/                    routes (_layout.tsx, index.tsx = workspace: sidebar + editor + quick open)
+  components/library/     Sidebar.tsx, QuickOpen.tsx (RN primitives), dnd.web.tsx / dnd.tsx (drag-and-drop split)
   components/editor/      MarkdownEditor.tsx ('use dom' CodeMirror 6), focus.ts (dimming, typewriter), theme.ts, fonts.ts
-  src/storage/            DocumentStore adapters: documentStore.web.ts (Electron IPC or localStorage),
-                          documentStore.native.ts (in-memory stub until M5)
+  src/storage/            platform adapters: documentStore.web.ts (Electron IPC or localStorage),
+                          documentStore.native.ts (in-memory stubs until M6); documentBackend.ts,
+                          libraryBackend.ts, settingsStore.ts
+  src/useWorkspace.ts     library listing + open document session (switch/rename/trash vs. saves)
 apps/desktop/             Electron 45 shell
   src/main.ts             window, menu, app:// protocol, IPC handlers
   src/preload.ts          contextBridge → window.marginDesktop
@@ -59,7 +62,7 @@ docs/decisions/           ADRs
 
 ## Testing
 - **Unit (Vitest):** put tests next to the package in `test/*.test.ts`. `packages/core` covers paths, the in-memory store and markdown helpers; `apps/desktop/test` covers `FileSystemLibrary`, including traversal and symlink escapes. New packages are picked up through `vitest.config.ts` `projects`.
-- **E2E (Playwright `_electron`):** `e2e/launch.ts` starts `apps/desktop/dist/main.js` with the stock Electron binary and a temp library folder. The packaged app has fuses that block Playwright attaching; `pnpm verify:packaged` covers it instead. `desktop.smoke.spec.ts` covers typing and saving, font, column, marker dimming (incl. `>` and `[ ]`), dark mode, fullscreen and IPC path rejection. `focus.spec.ts` covers focus mode (menu toggles, dimming opacity around the caret, code blocks/headings, persistence, typewriter centring, "Not saved" in focus mode, and no long tasks typing in 20 MB). `datasafety.spec.ts` is the regression suite for ADR 0006: quit or close straight after typing, the unsaved-changes dialog (dialogs stubbed in main via `stubDialogs`), hung renderers, CRLF/BOM/non-UTF-8 files, filesystems without hard links (`MARGIN_TEST_NO_HARDLINKS`), a 20 MB document, concurrent writes, external edits (clean and dirty), refused paths, and the failing-save indicator with retry. It needs a macOS GUI session; Electron can't run truly headless on macOS. Run with `MARGIN_SHOW_INACTIVE=1` (the launcher sets it) so the window doesn't steal keystrokes from the user.
+- **E2E (Playwright `_electron`):** `e2e/launch.ts` starts `apps/desktop/dist/main.js` with the stock Electron binary and a temp library folder. The packaged app has fuses that block Playwright attaching; `pnpm verify:packaged` covers it instead. `desktop.smoke.spec.ts` covers typing and saving, font, column, marker dimming (incl. `>` and `[ ]`), dark mode, fullscreen and IPC path rejection. `focus.spec.ts` covers focus mode (menu toggles, dimming opacity around the caret, code blocks/headings, persistence, typewriter centring, "Not saved" in focus mode, and no long tasks typing in 20 MB). `library.spec.ts` covers M3 (sidebar toggle, create/rename/sort/trash, drag-to-move, live external changes, quick open, switching with unsaved text, renaming/moving/trashing the open document, relaunch, folder picker); native Trash, Reveal, context menus and the folder picker are stubbed in main by helpers in `e2e/launch.ts`, and `currentDocument(page)` reads the open document. `datasafety.spec.ts` is the regression suite for ADR 0006: quit or close straight after typing, the unsaved-changes dialog (dialogs stubbed in main via `stubDialogs`), hung renderers, CRLF/BOM/non-UTF-8 files, filesystems without hard links (`MARGIN_TEST_NO_HARDLINKS`), a 20 MB document, concurrent writes, external edits (clean and dirty), refused paths, and the failing-save indicator with retry. It needs a macOS GUI session; Electron can't run truly headless on macOS. Run with `MARGIN_SHOW_INACTIVE=1` (the launcher sets it) so the window doesn't steal keystrokes from the user.
 - **iOS:** not runnable here (no Xcode). `cd apps/app && npx expo export --platform ios` at least proves the native and DOM bundles compile.
 - Before pushing: `pnpm typecheck && pnpm test`, plus `pnpm build:desktop && pnpm test:e2e && pnpm verify:packaged` if desktop or editor code changed.
 

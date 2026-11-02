@@ -18,9 +18,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 - [x] Hide all chrome; toggle via shortcut
 
 ## M3 — Local document library
-- [ ] Local markdown store with folders (create / rename / move / delete)
-- [ ] Library sidebar & quick open
-- [ ] First-run: choose documents folder (default `~/Documents/Margin`)
+- [x] Local markdown store with folders (create / rename / move / delete)
+- [x] Library sidebar & quick open
+- [x] First-run: choose documents folder (default `~/Documents/Margin`)
 
 ## M4 — Authentication (before any server is exposed)
 Nothing server-side ships without this. See ADR to be written in this milestone.
