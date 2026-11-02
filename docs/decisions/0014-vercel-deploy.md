@@ -40,3 +40,8 @@ The M4/M5 server (`apps/server`, Hono) is deployed to the owner's personal Verce
 - Deploys: `npx vercel@latest deploy` (preview) from the repo root. Production is the owner's call: `npx vercel@latest deploy --prod`.
 - Real-Blob behaviour is checked by `pnpm --filter @margin/server verify:blob` (ADR 0012/0013 amendments), not by `pnpm test`. It pulls the **Preview** environment, so it runs against `margin-store-preview` and never touches production data.
 - Recovery from a rolled-back store: `docs/sync-recovery.md` and Margin › Reset Sync State for This Folder…
+
+## Amendments (2026-11-02, M8: the web app on the same project)
+- `vercel.json` gains `buildCommand: "pnpm run build:web"` (Expo web export, then `scripts/stage-web.mjs`) and cache headers. The build writes `apps/server/public/` (static files for the CDN) and `apps/server/web/index.html` (the shell, read by `server.ts` and only sent to signed-in browsers). Both are git-ignored build outputs. ADR 0020 has the design.
+- The Vercel build therefore needs the whole workspace installed (Expo and Metro for the export). It already installs from the root lockfile.
+- **To confirm on the first deploy:** `/` returns the sign-in page (401) when signed out; `/_expo/static/...` comes from the CDN; `/index.html` is not served publicly; `/api/me` is unchanged.

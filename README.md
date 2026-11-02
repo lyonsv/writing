@@ -35,7 +35,7 @@
 | Library keyboard | ↑/↓, →/← expand/collapse, Enter open, F2 rename |
 
 ## Status
-Margin is a personal project, built milestone by milestone ([ROADMAP.md](ROADMAP.md)). The **macOS app** and the **sync server** are in daily use. On **iPhone**, the plan is an installable web app (in progress, [ADR 0019](docs/decisions/0019-mobile-pwa.md)). The native iOS app (Expo) runs in Expo Go for development. macOS builds are **unsigned**: the first time, right-click Margin.app → Open (or System Settings › Privacy & Security › Open Anyway).
+Margin is a personal project, built milestone by milestone ([ROADMAP.md](ROADMAP.md)). The **macOS app** and the **sync server** are in daily use. On **iPhone**, Margin is an installable web app served by your server: open it in Safari, sign in, Add to Home Screen ([docs/ios-testing.md](docs/ios-testing.md), [ADRs 0019](docs/decisions/0019-mobile-pwa.md)/[0020](docs/decisions/0020-hosted-web-app.md)). It works offline and syncs. A native iOS app (Expo) exists for development in Expo Go. macOS builds are **unsigned**: the first time, right-click Margin.app → Open (or System Settings › Privacy & Security › Open Anyway).
 
 ## Run it locally
 
@@ -51,10 +51,11 @@ pnpm install
 |---|---|
 | Desktop app (development) | `pnpm dev:desktop`: the Expo web dev server plus Electron. Uses `~/Documents/Margin`; set `MARGIN_LIBRARY_DIR=/tmp/margin-test` to try it on a scratch folder. |
 | Packaged desktop app | `pnpm build:desktop`, then open `apps/desktop/release/mac-arm64/Margin.app`. `pnpm --filter @margin/desktop package` makes a `.dmg`. |
-| Browser (no sync) | `pnpm dev:web`, then open http://localhost:8081 (documents in localStorage). |
+| Browser (no sync) | `pnpm dev:web`, then open http://localhost:8081 (documents in IndexedDB). |
+| The web app with sync | `pnpm build:web && pnpm dev:server`, then open http://127.0.0.1:3000 and sign in (same as the hosted iPhone app). |
 | iOS (Expo Go) | `pnpm --filter @margin/app start` and scan the QR code. See [docs/ios-testing.md](docs/ios-testing.md). |
 | Sync server | `pnpm dev:server` (http://127.0.0.1:3000, in-memory store). Needs `apps/server/.env.local`; see below. |
-| Checks | `pnpm typecheck && pnpm test`; desktop end-to-end: `pnpm build:desktop && pnpm test:e2e && pnpm verify:packaged`. |
+| Checks | `pnpm typecheck && pnpm test`; end-to-end (desktop app + web app in WebKit): `npx playwright install webkit` once, then `pnpm build:desktop && pnpm test:e2e && pnpm verify:packaged`. |
 
 Development builds talk to the local server `http://127.0.0.1:3000`; the packaged app talks to `https://margin-sync.vercel.app`. Point either elsewhere with `MARGIN_SERVER_URL` (desktop) or Settings › Server (iOS). Signing in is optional: Margin works fully offline and signed out.
 
@@ -78,7 +79,7 @@ The server is a small Hono app (`apps/server`) for Vercel Functions, storing doc
 2. **Blob stores:** create two **private** stores (`vercel blob create-store <name> --access private`), one connected to **Production** only and one to **Preview/Development**. Set `PRODUCTION_BLOB_STORE_ID` everywhere, so a preview can never use production data.
 3. **GitHub OAuth App** for production, with callback `https://<your-domain>/api/auth/github/callback`.
 4. **Environment variables** (Vercel only, never committed): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (sensitive), `ALLOWED_GITHUB_LOGINS` (`login:id`), `AUTH_SECRET` (different per environment), and `PUBLIC_URL`. Every variable is listed in [.env.example](.env.example). A missing or malformed one makes the server refuse every request rather than run half-configured.
-5. **Deploy:** `npx vercel@latest deploy --prod`. Check that `curl https://<your-domain>/api/me` answers `401`. In Margin, set `MARGIN_SERVER_URL` (or `serverUrl` in settings.json) to your domain if it isn't `margin-sync.vercel.app`, and sign in.
+5. **Deploy:** `npx vercel@latest deploy --prod`. The build also exports the web app, so your server serves the iPhone/browser app at `/` (behind sign-in). Check that `curl https://<your-domain>/api/me` answers `401`. In Margin, set `MARGIN_SERVER_URL` (or `serverUrl` in settings.json) to your domain if it isn't `margin-sync.vercel.app`, and sign in.
 
 ## How it fits together
 
@@ -91,7 +92,10 @@ flowchart LR
   subgraph desktop["apps/desktop (Electron)"]
     MAIN["main process\nfiles · save pipeline · watcher\nsign-in · sync"]
   end
-  subgraph ios["iOS (Expo Go)"]
+  subgraph web["Browser / iPhone web app"]
+    IDB["NativeLibrary on IndexedDB\ncookie session · sync · service worker"]
+  end
+  subgraph ios["iOS native (Expo Go, development)"]
     NAT["NativeLibrary (expo-file-system)\nsign-in · sync"]
   end
   CORE["packages/core\npaths · tree · focus · sync engine · settings"]
@@ -102,6 +106,8 @@ flowchart LR
   UI --> ED
   app -- "web export over app://" --> MAIN
   app --> NAT
+  app --> IDB
+  IDB -- "same origin, cookie" --> SRV
   MAIN --> CORE
   NAT --> CORE
   UI --> CORE

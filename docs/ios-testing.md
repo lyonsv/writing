@@ -1,4 +1,38 @@
-# Trying Margin on your iPhone (Expo Go)
+# Install Margin on your iPhone
+
+Margin on iPhone is a **web app you add to your home screen** (ADR 0019/0020). It's free, needs no App Store or Apple developer account, has its own icon and full screen, works offline, and syncs with your Mac.
+
+## Install (once)
+1. On the iPhone, open **Safari** (it has to be Safari) and go to **https://margin-sync.vercel.app** (or your own server).
+2. Tap **Sign in with GitHub** and sign in. A home-screen app keeps its own cookies, so you may be asked to sign in once more after installing (step 4).
+3. Tap the **Share** button → **Add to Home Screen** → **Add**. The Margin icon appears on your home screen.
+4. Open Margin **from the icon** (not from Safari). If it shows the sign-in page, sign in again: this is the session the installed app uses.
+5. Settings → Account shows you signed in, with this iPhone listed as a device ("Web (Safari)").
+
+To remove it: long-press the icon → Remove App. Your documents stay on the server and your other devices. Delete them on the iPhone first if you want them gone from this phone's storage. Revoke the device from Account and Devices on the Mac.
+
+## Check it works (about 10 minutes)
+- [ ] **Write:** the app opens on the welcome document. Tap, type: no lag, and the text is IBM Plex Mono.
+- [ ] **Keyboard:** type at the bottom of a long document. The line you're typing stays above the keyboard and the toolbar sits on the keyboard. **Done** hides the keyboard with no blank band left behind.
+- [ ] **Focus mode:** **Focus** dims everything but the current sentence. **Typewriter** keeps the line centred in the area above the keyboard.
+- [ ] **Library:** **‹ Library**, then New, Folder, long-press → Rename / Move to… / Delete, and Search. Delete something, then restore it from Settings → Recently Deleted.
+- [ ] **Sync with the Mac:** write on the iPhone, then Sync on the Mac: it appears. Edit on the Mac, then come back to the iPhone app (or tap **Sync** in the library): the change arrives, and an open document reloads.
+- [ ] **Offline:** Airplane Mode, close the app (swipe it away), open it from the icon. It opens, your documents are there, and you can write; the status says **Offline**. Turn Airplane Mode off and come back to the app: the edits sync.
+- [ ] **Both edited at once:** with the same document changed on both devices before syncing, both versions survive (one as `name (conflict …).md`).
+- [ ] **Sign out:** Settings → Sign Out shows the sign-in page. With Airplane Mode on, opening the app no longer shows your library: the app shell isn't kept after sign-out. Documents already on the phone stay in its storage until you delete them.
+- [ ] **Storage kept:** after a few days without opening Margin, your documents are still there. Home-screen apps are exempt from Safari's 7-day storage limit; Margin also asks for persistent storage.
+
+## Known limits
+- No pull-to-refresh: use **Sync** in the library header (it also syncs whenever you return to the app).
+- No Files-app access or share sheet: documents live in the app's browser storage and on your server.
+- If iOS ever clears the app's storage (very low disk space), anything not yet synced is lost. Margin syncs a few seconds after each edit.
+
+---
+
+# Developing the native app (Expo Go)
+
+The M6 native iOS app isn't distributed (ADR 0019). It remains a development target. The checklist below is for working on it.
+
 
 No agent can run iOS here (no Xcode, no simulator; ADR 0005). Everything below is **untested on a device** until you've run it. Expect 20–30 minutes. Note what fails and roughly where.
 

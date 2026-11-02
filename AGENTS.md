@@ -19,7 +19,8 @@ Guidance for AI agents (and humans) continuing development.
 - **Server auth (ADR 0010):** every route goes through the single `requireAuth` middleware in `apps/server/src/createApp.ts`; only the auth routes in `PUBLIC_ROUTES` (native start GET/POST, web start, GitHub callback, code exchange) are public. Add routes to that app, never as separate `api/*.ts` files, and never add to `PUBLIC_ROUTES` without an ADR. ("Don't rely on middleware" in best-practices §6 means Vercel *Routing* Middleware, not this in-function gate.) Never log tokens, codes, `state` or URLs of auth callbacks (so no Hono `logger()`). Native redirects: desktop loopback only in Production; `margin://auth/callback` only with `ALLOW_NATIVE_SCHEME_REDIRECT=1` (dev; refused in Production, ADR 0017 amendments). Never set that flag on a Vercel Production environment. Every new route needs an entry in `ROUTE_BODY_LIMITS` (a test enforces it). Blob keys under `auth/` belong to auth (ADR 0012).
 - **Sync (ADR 0013):** never write library files from sync except through `FileSystemLibrary.*ForSync` (per-path queue + hash guard, no `known` update) and never delete except to the Trash with a hash guard. Any change to `planSync`/`runSync` must keep `packages/core/test/sync.test.ts` green, including the randomised simulation (`SYNC_SEEDS=3000` for a longer run). Server sync keys live under `sync/`; the server rejects blind overwrites (428).
 - **Tokens stay in the Electron main process** (ADR 0012). The renderer gets `AccountStatus` / `DeviceInfo` only; authenticated calls go through `AccountManager.request` in main. **On iOS the token lives only in the Keychain** (`expo-secure-store`, this-device-only) and is used only by `NativeAccount.request` (ADR 0017); never put it in settings or a file.
-- **iOS storage (ADR 0015):** library files are touched only through `NativeLibrary` (`apps/app/src/native/library.ts`) over `NativeFs`; keep its guarantees (atomic replace via the legacy `writeAsStringAsync`, per-path queue, synchronous check-then-move, `.md` only, no dotfiles, byte limits, delete → `.margin/trash`). `apps/app/test/library.test.ts` and `nativeSimulation.test.ts` must stay green.
+- **Web app (ADR 0020):** the browser store is `NativeLibrary` over `IdbFs` (one IndexedDB transaction per operation); Electron must keep real files (runtime choice in `documentStore.web.ts`). The HTML shell is served only after `requireAuth` (signed-out page requests get the sign-in page as the 401); never put `index.html` in `apps/server/public/` (`stage-web.mjs` refuses). The service worker (`apps/app/public/sw.js`) must never intercept `/api/*` and only caches responses marked `X-Margin-Shell: 1`. `e2e/web/pwa.spec.ts` must stay green.
+- **iOS storage (ADR 0015):** library files are touched only through `NativeLibrary` (`apps/app/src/local/library.ts`) over `NativeFs`; keep its guarantees (atomic replace via the legacy `writeAsStringAsync`, per-path queue, synchronous check-then-move, `.md` only, no dotfiles, byte limits, delete → `.margin/trash`). `apps/app/test/library.test.ts` and `nativeSimulation.test.ts` must stay green.
 - **Server URL defaults:** packaged desktop and release iOS builds use production `https://margin-sync.vercel.app`; development (unpackaged Electron, e2e, Expo Go/`__DEV__`) uses `http://127.0.0.1:3000` (`defaultServerUrl` in core). Overrides: desktop `MARGIN_SERVER_URL` or `serverUrl` in settings.json; iOS Settings › Server or `EXPO_PUBLIC_MARGIN_SERVER_URL`. Production is live (owner-deployed); agents never deploy `--prod` or change its config.
 - **Shared code runs in three places** (Electron renderer, browser, React Native/Hermes): don't assume `window.dispatchEvent`, `TextDecoder`, `atob` or `node:*` in `packages/core` or shared `apps/app` code (use `flushEditor()`, core `decodeUtf8`/`encodeBase64`).
 - `apps/server` imports only *types* from `@margin/core` (core ships raw TS, which the Vercel build isn't guaranteed to compile). Duplicate a runtime constant if needed, with a test that it matches.
@@ -32,13 +33,13 @@ Run everything from the repo root (Node >= 22, pnpm 10).
 |---|---|
 | `pnpm install` | Install all workspaces. Electron downloads its binary on first launch. |
 | `pnpm dev:desktop` | Starts the Expo web dev server on :8081, bundles main/preload, launches Electron against it. |
-| `pnpm dev:web` | Expo web dev server only (browser; storage = localStorage). |
-| `pnpm dev:server` | Auth server on http://127.0.0.1:3000 (Hono under `@hono/node-server`, in-memory store; no Vercel login). Reads `apps/server/.env.local`; see `docs/server-setup.md`. |
+| `pnpm dev:web` | Expo web dev server only (browser; library in IndexedDB, no sync). |
+| `pnpm dev:server` | Server on http://127.0.0.1:3000; also serves the web app from `apps/app/dist` when built (`pnpm build:web`): sign in at `/`, same origin as the API (ADR 0020). (Hono under `@hono/node-server`, in-memory store; no Vercel login). Reads `apps/server/.env.local`; see `docs/server-setup.md`. |
 | `pnpm --filter @margin/app start` | Expo dev server for iOS (Expo Go on a phone; owner checklist `docs/ios-testing.md`). |
 | `pnpm typecheck` | `tsc --noEmit` in every package. |
 | `pnpm test` | Vitest: `packages/*`, `apps/app` (iOS library/sync/sign-in logic on Node), `apps/desktop` (file library, account/sign-in) and `apps/server` (auth, sync). |
 | `pnpm build:desktop` | Expo web export → `apps/app/dist`, esbuild main/preload → `apps/desktop/dist`, electron-builder `--dir` → `apps/desktop/release/mac-arm64/Margin.app` (unsigned). |
-| `pnpm test:e2e` | Every Playwright `_electron` suite in `e2e/` (any `*.spec.ts` there runs, so don't leave probe specs behind). Runs the **built** app: after changing `apps/app` run `pnpm build:web`, after `apps/desktop` run `pnpm --filter @margin/desktop build:main` (or `pnpm build:desktop` for both); a stale `dist/` silently tests old code. |
+| `pnpm test:e2e` | Two Playwright projects: `desktop` (every `_electron` suite in `e2e/*.spec.ts`) and `web-iphone` (`e2e/web/*.spec.ts`, WebKit with an iPhone 15 profile against a local server serving the built web export; needs `npx playwright install webkit` once) (any `*.spec.ts` there runs, so don't leave probe specs behind). Runs the **built** app: after changing `apps/app` run `pnpm build:web`, after `apps/desktop` run `pnpm --filter @margin/desktop build:main` (or `pnpm build:desktop` for both); a stale `dist/` silently tests old code. |
 | `pnpm verify:packaged` | Checks the packaged `Margin.app`: Electron fuses are set, it launches, opens the document and quits cleanly. Run after `pnpm build:desktop`. |
 | `pnpm --filter @margin/desktop package` | Full dmg + zip (unsigned; signing is not planned, ADR 0019). |
 | `pnpm brand:build` / `pnpm brand:check` | Regenerate / verify every logo, icon (icns, iOS, splash, favicon) from `scripts/brand/build.mjs` (ADR 0018). Never hand-edit the outputs. |
@@ -61,7 +62,11 @@ apps/app/                 Expo SDK 58 + Expo Router (iOS + web)
   components/account/     AccountView.tsx: Account & Devices panel (RN primitives, takes an AccountBackend)
   app/*.native.tsx        iOS stack (ADR 0016): _layout (WorkspaceProvider), index (library), editor, settings;
                           editor.tsx / settings.tsx are web fallbacks that redirect to / (Expo Router needs a non-platform sibling)
-  src/native/             iOS: library.ts (NativeLibrary), nativeFs.ts + expoFs.ts, sync.ts, account.ts, settings.ts,
+  components/phone/       Library / Editor / Settings screens shared by iOS (app/*.native.tsx) and the web app on a phone (WebPhoneApp)
+  src/local/              platform-neutral: library.ts (NativeLibrary), nativeFs.ts, sync.ts (NativeSyncService), settings.ts, lifecycle.ts
+  src/web/                web app: idbFs.ts (IndexedDB NativeFs), account.ts (cookie session), services.ts, migrate.ts (localStorage → IndexedDB)
+  public/                 index.html template (PWA meta), manifest.webmanifest, sw.js, icons; copied into the web export
+  src/native/             iOS: expoFs.ts (NativeFs on expo-file-system), account.ts, phoneServices.ts, diagnostics.ts, palette.ts,
                           fonts.ts (inline Plex Mono for the WebView), services.ts (singletons + AppState wiring)
   src/WorkspaceContext.tsx, src/editorFlush.ts   iOS shared workspace; flushing the editor across the DOM bridge
   test/                   Vitest on Node: nodeFs.ts (NativeFs on real files), library, nativeSync (real server), nativeSimulation
@@ -81,7 +86,8 @@ apps/desktop/             Electron 45 shell
   scripts/                build.mjs (esbuild), dev.mjs
   electron-builder.yml    macOS packaging
 apps/server/              Hono app for Vercel Functions (Node, Fluid Compute); auth only so far (M4)
-  src/createApp.ts        routes + the one auth gate (requireAuth, PUBLIC_ROUTES)
+  src/createApp.ts        routes + the one auth gate (requireAuth, PUBLIC_ROUTES); web shell + sign-in page (ADR 0020)
+  src/webFiles.ts, scripts/stage-web.mjs   web export: local static serving / Vercel staging (public/ + web/index.html, git-ignored)
   src/devices.ts codes.ts nonces.ts  device tokens, one-time codes, OAuth state nonces (ETag-safe, HMAC-keyed)
   src/sync.ts syncPaths.ts  sync manifest CAS + content-addressed objects; server copy of the path rules
   src/store.ts blobStore.ts  KeyValueStore: MemoryStore / private Vercel Blob
