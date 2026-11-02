@@ -12,6 +12,8 @@
   "exclude": [
     "node_modules",
     "dist",
-    ".expo"
+    ".expo",
+    "test",
+    "vitest.config.mts"
   ]
 }
