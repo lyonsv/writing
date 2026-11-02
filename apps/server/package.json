@@ -1,0 +1,24 @@
+{
+  "name": "@margin/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Margin server (Vercel Functions, Hono)",
+  "scripts": {
+    "dev": "tsx watch src/dev.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.2",
+    "hono": "4.13.16"
+  },
+  "devDependencies": {
+    "@hono/node-server": "2.1.6",
+    "@margin/core": "workspace:*",
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "~6.0.3",
+    "vitest": "5.0.5"
+  }
+}

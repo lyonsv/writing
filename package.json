@@ -9,6 +9,7 @@
   "scripts": {
     "dev:desktop": "pnpm --filter @margin/desktop dev",
     "dev:web": "pnpm --filter @margin/app web",
+    "dev:server": "pnpm --filter @margin/server dev",
     "typecheck": "pnpm -r --parallel typecheck && tsc --noEmit -p e2e",
     "test": "vitest run",
     "build:web": "pnpm --filter @margin/app export:web",

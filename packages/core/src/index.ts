@@ -10,3 +10,4 @@ export * from './focus';
 export * from './settings';
 export * from './lineEndings';
 export * from './tree';
+export * from './account';
