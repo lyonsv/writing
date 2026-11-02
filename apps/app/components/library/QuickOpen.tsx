@@ -60,7 +60,7 @@ export function QuickOpen({ documents, colors, onOpen, onClose }: QuickOpenProps
               <Pressable
                 key={r.path}
                 testID={`quick-open-result:${r.path}`}
-                accessibilityState={{ selected: i === selected }}
+                aria-selected={i === selected}
                 onPress={() => choose(i)}
                 style={[styles.result, i === selected && { backgroundColor: colors.active }]}
               >

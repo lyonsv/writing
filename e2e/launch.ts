@@ -89,3 +89,48 @@ export async function currentDocument(page: import('@playwright/test').Page): Pr
   const label = (await handle.getAttribute('aria-label')) ?? '';
   return label.replace(/^Editing /, '');
 }
+
+/** Replaces shell.trashItem with a move into `trashDir` (so tests don't fill the real Trash) and records calls. */
+export async function stubTrash(app: ElectronApplication, trashDir: string): Promise<void> {
+  await app.evaluate(({ shell }, dir) => {
+    const fs = process.getBuiltinModule('node:fs') as typeof import('node:fs');
+    const p = process.getBuiltinModule('node:path') as typeof import('node:path');
+    const g = globalThis as unknown as { __trashed: string[] };
+    g.__trashed = [];
+    (shell as unknown as Record<string, unknown>).trashItem = async (item: string) => {
+      g.__trashed.push(item);
+      fs.renameSync(item, p.join(dir, `${g.__trashed.length}-${p.basename(item)}`));
+    };
+    (shell as unknown as Record<string, unknown>).showItemInFolder = (item: string) => {
+      (globalThis as unknown as { __revealed: string[] }).__revealed = [
+        ...((globalThis as unknown as { __revealed?: string[] }).__revealed ?? []),
+        item,
+      ];
+    };
+  }, trashDir);
+}
+
+/** Native context menus can't be clicked by Playwright: pick the item labelled `label` when the next one pops up. */
+export async function stubContextMenuChoice(app: ElectronApplication, label: string | null): Promise<void> {
+  await app.evaluate(({ Menu }, choice) => {
+    (Menu.prototype as unknown as Record<string, unknown>).popup = function (
+      this: { items: Array<{ label: string; click: () => void }> },
+      opts?: { callback?: () => void },
+    ) {
+      setTimeout(() => {
+        const item = choice === null ? undefined : this.items.find((i) => i.label === choice);
+        item?.click();
+        opts?.callback?.();
+      }, 0);
+    };
+  }, label);
+}
+
+export async function stubOpenDialog(app: ElectronApplication, folder: string | null): Promise<void> {
+  await app.evaluate(({ dialog }, dir) => {
+    (dialog as unknown as Record<string, unknown>).showOpenDialog = async () => ({
+      canceled: dir === null,
+      filePaths: dir === null ? [] : [dir],
+    });
+  }, folder);
+}

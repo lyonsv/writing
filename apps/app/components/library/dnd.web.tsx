@@ -40,7 +40,13 @@ export function RowShell({ path, isFolder, testID, onContextMenu, onDropPath, ch
         e.preventDefault();
         onContextMenu();
       }}
-      style={{ outline: over ? '1px solid var(--margin-drop, #1a8fc7)' : 'none', borderRadius: 4 }}
+      // Flex column so the row's button stretches across the full width (clickable anywhere).
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        outline: over ? '1px solid var(--margin-drop, #1a8fc7)' : 'none',
+        borderRadius: 4,
+      }}
     >
       {children}
     </div>
