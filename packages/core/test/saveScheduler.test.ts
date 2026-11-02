@@ -90,4 +90,23 @@ describe('SaveScheduler', () => {
     await f;
     expect(flushed).toBe(true);
   });
+
+  it('exclusive() pauses saving and resumes with text submitted meanwhile', async () => {
+    const d = deferred();
+    const saved: string[] = [];
+    let target = 'old.md';
+    const s = new SaveScheduler(async (t) => {
+      if (t === 'first') await d.promise;
+      saved.push(`${target}:${t}`);
+    });
+    s.submit('first'); // in flight
+    const renamed = s.exclusive(async () => {
+      target = 'new.md';
+    });
+    s.submit('second'); // must wait for the rename
+    d.resolve();
+    await renamed;
+    await s.flush();
+    expect(saved).toEqual(['old.md:first', 'new.md:second']);
+  });
 });

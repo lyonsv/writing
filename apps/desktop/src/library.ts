@@ -5,6 +5,8 @@ import path from 'node:path';
 import {
   DocumentStoreError,
   conflictCopyPath,
+  isWithin as isWithinKey,
+  rebasePath,
   documentEntry,
   folderEntry,
   isHiddenPath,
@@ -170,6 +172,12 @@ export class FileSystemLibrary implements DocumentStore {
   private readonly known = new Map<string, Version>();
   /** After a conflict on `key`, further saves to `key` go to the conflict copy while disk is unchanged. */
   private readonly redirects = new Map<string, { to: string; diskHash: string }>();
+  /**
+   * Tracked documents that were renamed/moved: a save that was already on its
+   * way to the old path follows the document instead of resurrecting it.
+   * Cleared when something new is created or opened at the old path.
+   */
+  private readonly moved = new Map<string, string>();
   private readonly watchers = new Map<string, AbortController>();
   /** Opened documents that aren't UTF-8: saving would corrupt them. */
   private readonly readOnly = new Set<string>();
@@ -293,6 +301,7 @@ export class FileSystemLibrary implements DocumentStore {
     } catch (error) {
       return Promise.reject(error);
     }
+    for (let hops = 0; this.moved.has(key) && hops < 32; hops++) key = this.moved.get(key)!;
     if (this.readOnly.has(key)) {
       return Promise.reject(new DisallowedPathError(key, 'not UTF-8 text; opened read-only'));
     }
@@ -314,6 +323,9 @@ export class FileSystemLibrary implements DocumentStore {
     if (!stat) throw new DocumentStoreError('not-found', `No such path ${from}`);
     if (isInside(src, dst)) throw new DocumentStoreError('invalid-path', 'Cannot move a folder into itself');
     await fs.mkdir(path.dirname(dst), { recursive: true });
+
+    // Let queued writes to anything inside a folder land before it moves.
+    if (stat.isDirectory()) await this.queue.idleWhere((k) => isWithinKey(srcKey, k) && k !== srcKey);
 
     // Take both path locks in a stable order so concurrent renames can't deadlock.
     const [first, second] = [srcKey, dstKey].sort() as [string, string];
@@ -344,12 +356,10 @@ export class FileSystemLibrary implements DocumentStore {
             if (code(error) === 'EEXIST') throw new DocumentStoreError('exists', `${to} already exists`);
             throw error;
           }
-          const v = this.known.get(srcKey);
-          this.known.delete(srcKey);
-          if (v) this.known.set(dstKey, v);
         }
         await fsyncDir(path.dirname(dst));
         await fsyncDir(path.dirname(src));
+        this.rebaseTracked(srcKey, dstKey);
       }),
     );
   }
@@ -364,8 +374,98 @@ export class FileSystemLibrary implements DocumentStore {
       if (!(await lstatOrNull(target))) throw new DocumentStoreError('not-found', `No such path ${relative}`);
       if (trash) await trash(target);
       else await fs.rm(target, { recursive: true });
-      this.known.delete(key);
+      this.forgetTracked(key);
     });
+  }
+
+  /** Recursive listing of folders and `.md` documents (dot-entries and symlinks skipped). */
+  async listTree(limit = 50_000): Promise<LibraryEntry[]> {
+    const out: LibraryEntry[] = [];
+    const walk = async (rel: string, depth: number): Promise<void> => {
+      if (depth > 64 || out.length >= limit) return;
+      const dir = rel === '' ? this.root : path.join(this.root, ...rel.split('/'));
+      let dirents;
+      try {
+        dirents = await fs.readdir(dir, { withFileTypes: true });
+      } catch (error) {
+        if (code(error) === 'ENOENT' || code(error) === 'EACCES') return;
+        throw error;
+      }
+      for (const d of dirents) {
+        if (out.length >= limit) return;
+        if (d.name.startsWith('.') || d.isSymbolicLink()) continue;
+        const childRel = joinDocPath(rel, d.name);
+        if (d.isDirectory()) {
+          out.push(folderEntry(childRel));
+          await walk(childRel, depth + 1);
+        } else if (d.isFile() && isMarkdownPath(d.name)) {
+          try {
+            const stat = await fs.stat(path.join(dir, d.name));
+            out.push({ ...documentEntry(childRel, '', stat.mtimeMs), size: stat.size });
+          } catch {
+            // vanished between readdir and stat
+          }
+        }
+      }
+    };
+    await walk('', 0);
+    return out;
+  }
+
+  /** Creates an empty document; fails with `exists` rather than touching an existing file. */
+  async createDocument(relative: string): Promise<void> {
+    const key = this.key(relative);
+    this.assertDocumentPath(key);
+    const file = await this.resolve(key);
+    await this.queue.run(key, () => this.createExclusive(file, ''));
+    this.moved.delete(key);
+  }
+
+  /** Moves tracked state (versions, watchers, redirects) along with a rename/move. */
+  private rebaseTracked(from: string, to: string): void {
+    const move = <V>(map: Map<string, V>) => {
+      for (const [k, v] of [...map]) {
+        const next = rebasePath(k, from, to);
+        if (next !== null) {
+          map.delete(k);
+          map.set(next, v);
+        }
+      }
+    };
+    for (const k of this.known.keys()) {
+      const next = rebasePath(k, from, to);
+      if (next !== null) this.moved.set(k, next);
+    }
+    move(this.known);
+    move(this.redirects);
+    for (const k of [...this.readOnly]) {
+      const next = rebasePath(k, from, to);
+      if (next !== null) {
+        this.readOnly.delete(k);
+        this.readOnly.add(next);
+      }
+    }
+    for (const [k, ac] of [...this.watchers]) {
+      const next = rebasePath(k, from, to);
+      if (next !== null) {
+        ac.abort();
+        this.watchers.delete(k);
+        void this.resolve(next).then((file) => this.watch(next, file)).catch(() => undefined);
+      }
+    }
+  }
+
+  private forgetTracked(key: string): void {
+    for (const map of [this.known, this.redirects, this.moved] as Map<string, unknown>[]) {
+      for (const k of [...map.keys()]) if (isWithinKey(key, k)) map.delete(k);
+    }
+    for (const k of [...this.readOnly]) if (isWithinKey(key, k)) this.readOnly.delete(k);
+    for (const [k, ac] of [...this.watchers]) {
+      if (isWithinKey(key, k)) {
+        ac.abort();
+        this.watchers.delete(k);
+      }
+    }
   }
 
   async createFolder(relative: string): Promise<void> {
@@ -401,6 +501,7 @@ export class FileSystemLibrary implements DocumentStore {
       const stat = await fs.stat(file);
       this.known.set(key, { hash: hashOf(buf), mtimeMs: stat.mtimeMs, size: stat.size });
       this.redirects.delete(key);
+      this.moved.delete(key);
       const text = decodeUtf8(buf);
       if (text === null) {
         this.readOnly.add(key);

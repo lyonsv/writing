@@ -224,3 +224,74 @@ describe('FileSystemLibrary encodings', () => {
     expect(await lib.open('crlf.md')).toEqual({ path: 'crlf.md', content: '﻿a\r\nb\r\n' });
   });
 });
+
+describe('FileSystemLibrary tree operations', () => {
+  it('lists the whole tree, skipping dot-entries, symlinks and non-markdown files', async () => {
+    await lib.write('a.md', 'a');
+    await lib.write('notes/deep/b.md', 'bb');
+    writeFileSync(path.join(root, 'notes', 'image.png'), '');
+    writeFileSync(path.join(root, '.hidden.md'), '');
+    symlinkSync(base, path.join(root, 'link'));
+    const entries = await lib.listTree();
+    expect(entries.map((e) => `${e.kind}:${e.path}`).sort()).toEqual([
+      'document:a.md',
+      'document:notes/deep/b.md',
+      'folder:notes',
+      'folder:notes/deep',
+    ]);
+    expect(entries.find((e) => e.path === 'notes/deep/b.md')).toMatchObject({ size: 2 });
+  });
+
+  it('creates documents exclusively', async () => {
+    await lib.createDocument('n/new.md');
+    expect(readFileSync(path.join(root, 'n/new.md'), 'utf8')).toBe('');
+    await lib.write('n/new.md', 'content');
+    await expect(lib.createDocument('n/new.md')).rejects.toMatchObject({ code: 'exists' });
+    expect(readFileSync(path.join(root, 'n/new.md'), 'utf8')).toBe('content');
+    await expect(lib.createDocument('n/new.txt')).rejects.toBeInstanceOf(DisallowedPathError);
+  });
+
+  it('moving a folder carries the open document along: tracking, conflicts and late saves', async () => {
+    await lib.write('notes/doc.md', 'v1');
+    await lib.open('notes/doc.md');
+    // A save queued right before the move must land before it, not resurrect the old path after.
+    const before = lib.save('notes/doc.md', 'v2');
+    await lib.rename('notes', 'archive/notes');
+    await before;
+    expect(readFileSync(path.join(root, 'archive/notes/doc.md'), 'utf8')).toBe('v2');
+    expect(existsSync(path.join(root, 'notes'))).toBe(false);
+
+    // A straggler addressed to the old path follows the document.
+    expect(await lib.save('notes/doc.md', 'v3')).toEqual({ status: 'saved', path: 'archive/notes/doc.md' });
+    expect(existsSync(path.join(root, 'notes'))).toBe(false);
+    expect(readFileSync(path.join(root, 'archive/notes/doc.md'), 'utf8')).toBe('v3');
+
+    // Conflict detection still applies at the new path.
+    writeFileSync(path.join(root, 'archive/notes/doc.md'), 'external');
+    expect(await lib.save('archive/notes/doc.md', 'v4')).toMatchObject({ status: 'conflict' });
+    expect(readFileSync(path.join(root, 'archive/notes/doc.md'), 'utf8')).toBe('external');
+  });
+
+  it('creating a new document at a moved-from path stops redirecting', async () => {
+    await lib.write('a.md', 'A');
+    await lib.open('a.md');
+    await lib.rename('a.md', 'b.md');
+    await lib.createDocument('a.md');
+    await lib.save('a.md', 'new A');
+    expect(readFileSync(path.join(root, 'a.md'), 'utf8')).toBe('new A');
+    expect(readFileSync(path.join(root, 'b.md'), 'utf8')).toBe('A');
+  });
+
+  it('delete uses the injected trash function and forgets tracking', async () => {
+    await lib.write('f/x.md', 'x');
+    await lib.open('f/x.md');
+    const trashed: string[] = [];
+    await lib.delete('f', async (abs) => {
+      trashed.push(abs);
+      rmSync(abs, { recursive: true });
+    });
+    expect(trashed).toEqual([path.join(root, 'f')]);
+    await lib.save('f/x.md', 'again'); // untracked now: plain write, no conflict
+    expect(readFileSync(path.join(root, 'f/x.md'), 'utf8')).toBe('again');
+  });
+});

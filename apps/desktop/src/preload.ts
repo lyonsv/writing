@@ -1,6 +1,8 @@
 import {
+  APP_COMMANDS,
   DESKTOP_BRIDGE_KEY,
   IPC_CHANNELS,
+  type AppCommand,
   type DesktopBridge,
   type ExternalChange,
   type FlushResult,
@@ -49,6 +51,31 @@ const bridge: DesktopBridge = {
         ipcRenderer.removeListener(IPC_CHANNELS.externalChange, wrapped);
       };
     },
+  },
+  library: {
+    listTree: () => invoke(IPC_CHANNELS.libraryTree),
+    createDocument: (path) => invoke(IPC_CHANNELS.libraryCreateDocument, path),
+    createFolder: (path) => invoke(IPC_CHANNELS.createFolder, path),
+    rename: (from, to) => invoke(IPC_CHANNELS.rename, from, to),
+    trash: (path) => invoke(IPC_CHANNELS.delete, path),
+    revealInFinder: (path) => invoke(IPC_CHANNELS.libraryReveal, path),
+    showContextMenu: (items) => invoke(IPC_CHANNELS.libraryContextMenu, items),
+    onChange: (listener) => {
+      const wrapped = () => listener();
+      ipcRenderer.on(IPC_CHANNELS.libraryChanged, wrapped);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.libraryChanged, wrapped);
+      };
+    },
+  },
+  onCommand: (listener) => {
+    const wrapped = (_event: unknown, command: AppCommand) => {
+      if (APP_COMMANDS.includes(command)) listener(command);
+    };
+    ipcRenderer.on(IPC_CHANNELS.command, wrapped);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.command, wrapped);
+    };
   },
   settings: {
     load: () => invoke(IPC_CHANNELS.settingsLoad),

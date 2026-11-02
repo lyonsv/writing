@@ -26,6 +26,7 @@ export interface SaveSchedulerOptions {
 export class SaveScheduler {
   private pending: string | null = null;
   private latest: string | null = null;
+  private blocked = 0;
   private running: Promise<void> | null = null;
   private retryTimer: unknown = undefined;
   private attempt = 0;
@@ -68,12 +69,28 @@ export class SaveScheduler {
     while (this.running) await this.running;
   }
 
+  /**
+   * Runs `fn` with saving paused: waits for an in-flight save, runs `fn`, then
+   * resumes. Text submitted meanwhile stays pending and is saved afterwards,
+   * so a rename/move of the document can't race a save to its old path.
+   */
+  async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    this.blocked++;
+    try {
+      while (this.running) await this.running;
+      return await fn();
+    } finally {
+      this.blocked--;
+      if (this.blocked === 0 && this.retryTimer === undefined) this.kick();
+    }
+  }
+
   dispose(): void {
     this.clearRetry();
   }
 
   private kick(): void {
-    if (this.running || this.pending === null) return;
+    if (this.running || this.pending === null || this.blocked > 0) return;
     this.running = this.loop().finally(() => {
       this.running = null;
       // Text submitted after the loop's last check but before this callback.
@@ -82,7 +99,7 @@ export class SaveScheduler {
   }
 
   private async loop(): Promise<void> {
-    while (this.pending !== null) {
+    while (this.pending !== null && this.blocked === 0) {
       const text = this.pending;
       this.pending = null;
       this.setStatus('saving');
@@ -102,7 +119,7 @@ export class SaveScheduler {
         return;
       }
     }
-    this.setStatus('saved');
+    if (this.pending === null) this.setStatus('saved');
   }
 
   private setStatus(status: SaveStatus, error?: unknown): void {

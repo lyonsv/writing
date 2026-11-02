@@ -20,6 +20,15 @@ export class SerialQueue {
     return this.tails.has(key);
   }
 
+  /** Resolves once every task queued so far for keys matching `predicate` has settled. */
+  async idleWhere(predicate: (key: string) => boolean): Promise<void> {
+    for (;;) {
+      const pending = [...this.tails].filter(([k]) => predicate(k)).map(([, t]) => t);
+      if (pending.length === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
   /** Resolves once every task queued so far (for any key) has settled. */
   async idle(): Promise<void> {
     while (this.tails.size > 0) await Promise.allSettled([...this.tails.values()]);

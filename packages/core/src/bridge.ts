@@ -22,6 +22,12 @@ export const IPC_CHANNELS = {
   externalChange: 'margin:doc:external-change',
   flushRequest: 'margin:flush-request',
   flushDone: 'margin:flush-done',
+  libraryTree: 'margin:library:tree',
+  libraryCreateDocument: 'margin:library:create-document',
+  libraryReveal: 'margin:library:reveal',
+  libraryContextMenu: 'margin:library:context-menu',
+  libraryChanged: 'margin:library:changed',
+  command: 'margin:command',
   settingsLoad: 'margin:settings:load',
   settingsUpdate: 'margin:settings:update',
   settingsChanged: 'margin:settings:changed',
@@ -31,6 +37,8 @@ export const IPC_CHANNELS = {
 
 /** Window event the editor listens for: flush pending text synchronously via onChange. */
 export const FLUSH_EVENT = 'margin:flush';
+/** Window event the editor listens for: take keyboard focus (e.g. after quick open closes). */
+export const FOCUS_EDITOR_EVENT = 'margin:focus-editor';
 
 export type SaveResult =
   | { status: 'saved'; path: string }
@@ -88,6 +96,29 @@ export interface FlushResult {
   unsavedText?: string;
 }
 
+/** Commands the desktop menu sends to the renderer. */
+export type AppCommand = 'new-document' | 'new-folder' | 'quick-open';
+export const APP_COMMANDS: readonly AppCommand[] = ['new-document', 'new-folder', 'quick-open'];
+
+export type ContextMenuItem = { id: string; label: string; enabled?: boolean } | { type: 'separator' };
+
+export interface DesktopLibraryBridge {
+  /** Flat recursive listing (folders + .md documents). */
+  listTree(): Promise<LibraryEntry[]>;
+  /** Creates an empty document; rejects if anything exists at `path`. */
+  createDocument(path: string): Promise<void>;
+  createFolder(path: string): Promise<void>;
+  /** Rename or move; never replaces an existing destination. */
+  rename(from: string, to: string): Promise<void>;
+  /** Moves to the macOS Trash (never a hard delete). */
+  trash(path: string): Promise<void>;
+  revealInFinder(path: string): Promise<void>;
+  /** Shows a native context menu; resolves with the chosen item id, or null if dismissed. */
+  showContextMenu(items: ContextMenuItem[]): Promise<string | null>;
+  /** Fires (debounced) when anything in the library folder changes on disk. */
+  onChange(listener: () => void): () => void;
+}
+
 export interface DesktopSettingsBridge {
   load(): Promise<Settings>;
   /** Unknown keys / invalid values are ignored by the main process. */
@@ -100,7 +131,9 @@ export interface DesktopBridge {
   platform: string;
   store: DesktopStoreBridge;
   documents: DesktopDocumentsBridge;
+  library: DesktopLibraryBridge;
   settings: DesktopSettingsBridge;
+  onCommand(listener: (command: AppCommand) => void): () => void;
   /**
    * Registers a handler the main process runs before a window closes or the app
    * quits; the close/quit waits for every handler's promise.

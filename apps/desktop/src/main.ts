@@ -1,11 +1,13 @@
 import path from 'node:path';
 
-import { promises as fs } from 'node:fs';
+import { promises as fs, statSync } from 'node:fs';
 
 import {
   IPC_CHANNELS,
   basename,
   displayName,
+  type AppCommand,
+  type ContextMenuItem,
   type ExternalChange,
   type FlushResult,
   type FocusScopeSetting,
@@ -24,6 +26,8 @@ import {
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
 } from 'electron';
+
+import { watch as watchTree, type FSWatcher } from 'chokidar';
 
 import { FileSystemLibrary } from './library';
 import { SettingsFile } from './settings';
@@ -53,16 +57,130 @@ if (process.env.MARGIN_USER_DATA_DIR) {
 
 registerAppScheme();
 
-const libraryDir = path.resolve(process.env.MARGIN_LIBRARY_DIR ?? path.join(app.getPath('documents'), 'Margin'));
-const library = new FileSystemLibrary(libraryDir, {
-  onExternalChange: broadcastExternalChange,
-  // Test hook: behave like a filesystem without hard links (exFAT, SMB).
-  ...(process.env.MARGIN_TEST_NO_HARDLINKS
-    ? { link: async () => Promise.reject(Object.assign(new Error('link disabled'), { code: 'ENOTSUP' })) }
-    : {}),
-});
-
+let library!: FileSystemLibrary;
+let treeWatcher: FSWatcher | undefined;
 let settings: SettingsFile;
+
+const defaultLibraryDir = () => path.join(app.getPath('documents'), 'Margin');
+
+/**
+ * Library folder: MARGIN_LIBRARY_DIR (tests), else the folder chosen with
+ * "Choose Documents Folder…", else ~/Documents/Margin. A remembered folder that
+ * no longer exists (e.g. an unplugged drive) falls back to the default rather
+ * than being recreated in place.
+ */
+function initialLibraryDir(): string {
+  if (process.env.MARGIN_LIBRARY_DIR) return path.resolve(process.env.MARGIN_LIBRARY_DIR);
+  const chosen = settings.get().libraryDir;
+  if (chosen) {
+    try {
+      if (statSync(chosen).isDirectory()) return chosen;
+    } catch {
+      /* fall through */
+    }
+    console.warn(`Margin: library folder ${chosen} is missing; using the default`);
+  }
+  return defaultLibraryDir();
+}
+
+function createLibrary(dir: string): FileSystemLibrary {
+  return new FileSystemLibrary(dir, {
+    onExternalChange: broadcastExternalChange,
+    // Test hook: behave like a filesystem without hard links (exFAT, SMB).
+    ...(process.env.MARGIN_TEST_NO_HARDLINKS
+      ? { link: async () => Promise.reject(Object.assign(new Error('link disabled'), { code: 'ENOTSUP' })) }
+      : {}),
+  });
+}
+
+let treeChangeTimer: NodeJS.Timeout | undefined;
+
+/** Watches the whole library so external adds/removes/renames show up live (debounced). */
+async function startTreeWatcher(root: string): Promise<void> {
+  await treeWatcher?.close();
+  const watcher = watchTree(root, {
+    ignoreInitial: true,
+    followSymlinks: false,
+    depth: 64,
+    // Dot-entries: our own temp files, .git, .DS_Store…
+    ignored: (p: string) => p !== root && path.basename(p).startsWith('.'),
+  });
+  watcher.on('all', () => {
+    clearTimeout(treeChangeTimer);
+    treeChangeTimer = setTimeout(() => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.libraryChanged);
+      }
+    }, 150);
+  });
+  watcher.on('error', (error) => console.error('Margin: library watcher error', error));
+  await new Promise<void>((resolve) => watcher.once('ready', () => resolve()));
+  treeWatcher = watcher;
+}
+
+function sendCommand(command: AppCommand, win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]): void {
+  if (win && !win.isDestroyed()) win.webContents.send(IPC_CHANNELS.command, command);
+}
+
+function parseContextMenuItems(raw: unknown): ContextMenuItem[] {
+  if (!Array.isArray(raw) || raw.length > 30) throw new TypeError('Bad context menu');
+  return raw.map((item: unknown) => {
+    const i = item as Record<string, unknown>;
+    if (i?.type === 'separator') return { type: 'separator' as const };
+    if (typeof i?.id !== 'string' || typeof i.label !== 'string' || i.label.length > 100) {
+      throw new TypeError('Bad context menu item');
+    }
+    return { id: i.id, label: i.label, enabled: i.enabled !== false };
+  });
+}
+
+function popupContextMenu(win: BrowserWindow, items: ContextMenuItem[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    let chosen: string | null = null;
+    const menu = Menu.buildFromTemplate(
+      items.map((item) =>
+        'type' in item
+          ? { type: 'separator' as const }
+          : { label: item.label, enabled: item.enabled !== false, click: () => (chosen = item.id) },
+      ),
+    );
+    // On macOS the click can arrive just after the close callback; give it a tick.
+    menu.popup({ window: win, callback: () => setTimeout(() => resolve(chosen), 0) });
+  });
+}
+
+let switchingLibrary = false;
+
+/** File > Choose Documents Folder…: flush, confirm if needed, switch, reload windows. */
+async function chooseLibraryFolder(): Promise<void> {
+  if (switchingLibrary) return;
+  const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const options = {
+    title: 'Choose Documents Folder',
+    buttonLabel: 'Use Folder',
+    defaultPath: library.root,
+    properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>,
+  };
+  const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+  const dir = result.filePaths[0];
+  if (result.canceled || !dir || path.resolve(dir) === library.root) return;
+
+  switchingLibrary = true;
+  try {
+    const outcomes = await Promise.all(BrowserWindow.getAllWindows().map(flushWindow));
+    const unsaved = outcomes.filter((o) => !o.clean);
+    if (unsaved.length > 0 && !(await confirmDiscard(unsaved, 'Switch', parent))) return;
+    await library.idle();
+    library.dispose();
+    library = createLibrary(path.resolve(dir));
+    await library.init();
+    await startTreeWatcher(library.root);
+    await settings.update({ libraryDir: library.root, lastDocument: '' });
+    for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.reload();
+  } finally {
+    switchingLibrary = false;
+  }
+}
 
 function broadcastExternalChange(change: ExternalChange): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -162,7 +280,11 @@ function flushWindow(win: BrowserWindow): Promise<FlushOutcome> {
  * Some text couldn't be saved. Ask before discarding it; Cancel is the default.
  * Returns true if it's OK to proceed with closing/quitting.
  */
-async function confirmDiscard(unsaved: FlushResult[], action: 'Quit' | 'Close', parent?: BrowserWindow): Promise<boolean> {
+async function confirmDiscard(
+  unsaved: FlushResult[],
+  action: 'Quit' | 'Close' | 'Switch',
+  parent?: BrowserWindow,
+): Promise<boolean> {
   const first = unsaved[0]!;
   const name = first.path ? basename(first.path) : 'your document';
   const options = {
@@ -212,7 +334,7 @@ app.on('before-quit', (event) => {
     let proceed = true;
     try {
       const outcomes = await Promise.all(BrowserWindow.getAllWindows().map(flushWindow));
-      await Promise.all([library.idle(), settings?.idle()]);
+      await Promise.all([library?.idle(), settings?.idle(), treeWatcher?.close()]);
       const unsaved = outcomes.filter((o) => !o.clean);
       if (unsaved.length > 0) proceed = await confirmDiscard(unsaved, 'Quit');
     } catch (error) {
@@ -223,7 +345,7 @@ app.on('before-quit', (event) => {
       return;
     }
     quitReady = true;
-    library.dispose();
+    library?.dispose();
     app.quit();
   })();
 });
@@ -247,11 +369,25 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.save, (p: string, content: string) => library.save(p, content));
   handle(IPC_CHANNELS.acknowledgeExternal, (p: string, token: string) => library.acknowledgeExternal(p, token));
   handle(IPC_CHANNELS.libraryRoot, async () => library.root);
+  handle(IPC_CHANNELS.libraryTree, () => library.listTree());
+  handle(IPC_CHANNELS.libraryCreateDocument, (p: string) => library.createDocument(p));
+  handle(IPC_CHANNELS.libraryReveal, async (p: string) => shell.showItemInFolder(await library.resolve(p)));
+  ipcMain.handle(IPC_CHANNELS.libraryContextMenu, (event, items: unknown) => {
+    assertTrustedSender(event);
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    return popupContextMenu(win, parseContextMenuItems(items));
+  });
   handle(IPC_CHANNELS.settingsLoad, async () => settings.get());
   // Not via handle(): the patch is an object, validated by parseSettingsPatch inside update().
+  // The library folder can only change through the native folder picker.
   ipcMain.handle(IPC_CHANNELS.settingsUpdate, (event, patch: unknown) => {
     assertTrustedSender(event);
-    return settings.update(patch);
+    if (typeof patch === 'object' && patch !== null) {
+      const { libraryDir: _ignored, ...rest } = patch as Record<string, unknown>;
+      return settings.update(rest);
+    }
+    return settings.get();
   });
   handle(IPC_CHANNELS.toggleFullScreen, async () => toggleFullScreen());
 
@@ -293,6 +429,8 @@ function applySettings(s: Settings): void {
   };
   set('focus-mode', s.focusMode);
   set('typewriter', s.typewriter);
+  set('sidebar', s.sidebar);
+  set(`library-sort-${s.librarySort}`, true);
   // Radio items: only ever set the selected one; Electron unchecks the rest of the group
   // (setting a radio item to false makes Electron check a sibling instead).
   set(`focus-scope-${s.focusScope}`, true);
@@ -308,12 +446,52 @@ function buildMenu(): void {
     { role: 'appMenu' },
     {
       label: 'File',
-      submenu: [{ role: 'close' }],
+      submenu: [
+        { id: 'new-document', label: 'New Document', accelerator: 'CommandOrControl+N', click: () => sendCommand('new-document') },
+        { id: 'new-folder', label: 'New Folder', accelerator: 'CommandOrControl+Shift+N', click: () => sendCommand('new-folder') },
+        { id: 'quick-open', label: 'Quick Open…', accelerator: 'CommandOrControl+P', click: () => sendCommand('quick-open') },
+        { type: 'separator' },
+        { id: 'choose-library', label: 'Choose Documents Folder…', click: () => void chooseLibraryFolder() },
+        { type: 'separator' },
+        { role: 'close' },
+      ],
     },
     { role: 'editMenu' },
     {
       label: 'View',
       submenu: [
+        {
+          id: 'sidebar',
+          label: 'Show Library',
+          type: 'checkbox',
+          accelerator: 'CommandOrControl+\\',
+          checked: settings.get().sidebar,
+          // The sidebar never shows in focus mode: asking for it leaves focus mode.
+          click: () =>
+            updateSettings(
+              settings.get().focusMode ? { focusMode: false, sidebar: true } : { sidebar: !settings.get().sidebar },
+            ),
+        },
+        {
+          label: 'Sort Library By',
+          submenu: [
+            {
+              id: 'library-sort-name',
+              label: 'Name',
+              type: 'radio',
+              checked: settings.get().librarySort === 'name',
+              click: () => updateSettings({ librarySort: 'name' }),
+            },
+            {
+              id: 'library-sort-modified',
+              label: 'Date Modified',
+              type: 'radio',
+              checked: settings.get().librarySort === 'modified',
+              click: () => updateSettings({ librarySort: 'modified' }),
+            },
+          ],
+        },
+        { type: 'separator' },
         {
           id: 'focus-mode',
           label: 'Focus Mode',
@@ -429,10 +607,12 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  await library.init();
   settings = new SettingsFile(path.join(app.getPath('userData'), 'settings.json'));
   await settings.load();
   settings.onChange(applySettings);
+  library = createLibrary(initialLibraryDir());
+  await library.init();
+  await startTreeWatcher(library.root);
   // No camera, mic, notifications, etc.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   if (!DEV_SERVER_URL) handleAppScheme(webRoot());
