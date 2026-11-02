@@ -7,6 +7,7 @@ Guidance for AI agents (and humans) continuing development.
 2. Read `docs/decisions/` — don't silently contradict an accepted decision; write a new ADR that supersedes it.
 3. Read `docs/research/best-practices.md` for platform conventions. It predates the ADRs; where they disagree, the ADR wins (e.g. §6 sketches a shared `SYNC_TOKEN`; ADRs 0010–0012 replaced that with per-device tokens).
 4. Anything needing the owner's accounts (GitHub OAuth App, Vercel project, Apple) is documented for them, not done by agents: see `docs/server-setup.md`.
+5. **The working tree may be shared with other agents** working in parallel. Run `git status` before you start, stage only the paths you changed (never `git add -A` at the root), and `git pull --rebase` before pushing. Commits you didn't make may appear on top of yours.
 
 ## Working rules
 - Small, focused commits; push after each meaningful step. Conventional commit prefixes (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
@@ -17,7 +18,10 @@ Guidance for AI agents (and humans) continuing development.
 - Never weaken the save pipeline guarantees in ADR 0006; `e2e/datasafety.spec.ts` must stay green.
 - **Server auth (ADR 0010):** every route goes through the single `requireAuth` middleware in `apps/server/src/createApp.ts`; only the auth routes in `PUBLIC_ROUTES` (native start GET/POST, web start, GitHub callback, code exchange) are public. Add routes to that app, never as separate `api/*.ts` files, and never add to `PUBLIC_ROUTES` without an ADR. ("Don't rely on middleware" in best-practices §6 means Vercel *Routing* Middleware, not this in-function gate.) Never log tokens, codes, `state` or URLs of auth callbacks (so no Hono `logger()`). Every new route needs an entry in `ROUTE_BODY_LIMITS` (a test enforces it). Blob keys under `auth/` belong to auth (ADR 0012).
 - **Sync (ADR 0013):** never write library files from sync except through `FileSystemLibrary.*ForSync` (per-path queue + hash guard, no `known` update) and never delete except to the Trash with a hash guard. Any change to `planSync`/`runSync` must keep `packages/core/test/sync.test.ts` green, including the randomised simulation (`SYNC_SEEDS=3000` for a longer run). Server sync keys live under `sync/`; the server rejects blind overwrites (428).
-- **Tokens stay in the Electron main process** (ADR 0012). The renderer gets `AccountStatus` / `DeviceInfo` only; authenticated calls go through `AccountManager.request` in main.
+- **Tokens stay in the Electron main process** (ADR 0012). The renderer gets `AccountStatus` / `DeviceInfo` only; authenticated calls go through `AccountManager.request` in main. **On iOS the token lives only in the Keychain** (`expo-secure-store`, this-device-only) and is used only by `NativeAccount.request` (ADR 0017); never put it in settings or a file.
+- **iOS storage (ADR 0015):** library files are touched only through `NativeLibrary` (`apps/app/src/native/library.ts`) over `NativeFs`; keep its guarantees (atomic replace via the legacy `writeAsStringAsync`, per-path queue, synchronous check-then-move, `.md` only, no dotfiles, byte limits, delete → `.margin/trash`). `apps/app/test/library.test.ts` and `nativeSimulation.test.ts` must stay green.
+- **Server URL defaults:** packaged desktop and release iOS builds use production `https://margin-sync.vercel.app`; development (unpackaged Electron, e2e, Expo Go/`__DEV__`) uses `http://127.0.0.1:3000` (`defaultServerUrl` in core). Overrides: desktop `MARGIN_SERVER_URL` or `serverUrl` in settings.json; iOS Settings › Server or `EXPO_PUBLIC_MARGIN_SERVER_URL`. Production is live (owner-deployed); agents never deploy `--prod` or change its config.
+- **Shared code runs in three places** (Electron renderer, browser, React Native/Hermes): don't assume `window.dispatchEvent`, `TextDecoder`, `atob` or `node:*` in `packages/core` or shared `apps/app` code (use `flushEditor()`, core `decodeUtf8`/`encodeBase64`).
 - `apps/server` imports only *types* from `@margin/core` (core ships raw TS, which the Vercel build isn't guaranteed to compile). Duplicate a runtime constant if needed, with a test that it matches.
 - Deploys: previews only (`npx vercel@latest deploy` from the repo root; the root is linked to `margin-sync`, ADR 0014). Never `--prod`, never change deployment protection, never set or print the GitHub OAuth secrets; the owner does that (`docs/server-setup.md`). After storage changes run `pnpm --filter @margin/server verify:blob` against the real store. `.vercelignore` keeps `.env*` out of uploads.
 
@@ -30,9 +34,9 @@ Run everything from the repo root (Node >= 22, pnpm 10).
 | `pnpm dev:desktop` | Starts the Expo web dev server on :8081, bundles main/preload, launches Electron against it. |
 | `pnpm dev:web` | Expo web dev server only (browser; storage = localStorage). |
 | `pnpm dev:server` | Auth server on http://127.0.0.1:3000 (Hono under `@hono/node-server`, in-memory store; no Vercel login). Reads `apps/server/.env.local`; see `docs/server-setup.md`. |
-| `pnpm --filter @margin/app start` | Expo dev server for iOS (Expo Go). |
+| `pnpm --filter @margin/app start` | Expo dev server for iOS (Expo Go on a phone; owner checklist `docs/ios-testing.md`). |
 | `pnpm typecheck` | `tsc --noEmit` in every package. |
-| `pnpm test` | Vitest: `packages/*`, `apps/desktop` (file library, account/sign-in) and `apps/server` (auth). |
+| `pnpm test` | Vitest: `packages/*`, `apps/app` (iOS library/sync/sign-in logic on Node), `apps/desktop` (file library, account/sign-in) and `apps/server` (auth, sync). |
 | `pnpm build:desktop` | Expo web export → `apps/app/dist`, esbuild main/preload → `apps/desktop/dist`, electron-builder `--dir` → `apps/desktop/release/mac-arm64/Margin.app` (unsigned). |
 | `pnpm test:e2e` | Every Playwright `_electron` suite in `e2e/` (any `*.spec.ts` there runs, so don't leave probe specs behind). Runs the **built** app: after changing `apps/app` run `pnpm build:web`, after `apps/desktop` run `pnpm --filter @margin/desktop build:main` (or `pnpm build:desktop` for both); a stale `dist/` silently tests old code. |
 | `pnpm verify:packaged` | Checks the packaged `Margin.app`: Electron fuses are set, it launches, opens the document and quits cleanly. Run after `pnpm build:desktop`. |
@@ -40,7 +44,7 @@ Run everything from the repo root (Node >= 22, pnpm 10).
 
 Keyboard shortcuts (desktop menus; bound in the editor itself elsewhere): New Document ⌘N · New Folder ⇧⌘N · Quick Open ⌘P · Show Library ⌘\ · Focus Mode ⇧⌘F · Focus on Sentence ⌥⌘1 / Paragraph ⌥⌘2 / Nothing ⌥⌘0 · Typewriter Scrolling ⌥⌘T · Full Screen ⌃⌘F. See ADRs 0007 and 0009.
 
-Desktop env overrides (see `.env.example`): `MARGIN_LIBRARY_DIR` (default `~/Documents/Margin`), `MARGIN_USER_DATA_DIR`, `MARGIN_WEB_DIR`, `MARGIN_DEV_SERVER_URL` (dev mode), `MARGIN_SERVER_URL` (sign-in server, default `http://127.0.0.1:3000`), `MARGIN_SHOW_INACTIVE` (don't steal OS focus; used by tests), `MARGIN_TEST_NO_HARDLINKS`, `MARGIN_TEST_LIST_LIMIT` (tests). Server env vars: `.env.example` and `docs/server-setup.md`. **Never point a test or dev run at `~/Documents/Margin`**: e2e uses temp folders via `MARGIN_LIBRARY_DIR` / `MARGIN_USER_DATA_DIR`.
+Desktop env overrides (see `.env.example`): `MARGIN_LIBRARY_DIR` (default `~/Documents/Margin`), `MARGIN_USER_DATA_DIR`, `MARGIN_WEB_DIR`, `MARGIN_DEV_SERVER_URL` (dev mode), `MARGIN_SERVER_URL` (sign-in server; default production when packaged, `http://127.0.0.1:3000` unpackaged), `MARGIN_SHOW_INACTIVE` (don't steal OS focus; used by tests), `MARGIN_TEST_NO_HARDLINKS`, `MARGIN_TEST_LIST_LIMIT` (tests). Server env vars: `.env.example` and `docs/server-setup.md`. **Never point a test or dev run at `~/Documents/Margin`**: e2e uses temp folders via `MARGIN_LIBRARY_DIR` / `MARGIN_USER_DATA_DIR`.
 
 Account menu (app menu): Sign In… · Sign Out · Account and Devices… · Sync Now ⌥⌘S · Reset Sync State for This Folder… (ADRs 0010–0014, `docs/sync-recovery.md`). Previews use their own Blob store; never point a preview at the production store (the server refuses). Sidebar keyboard: ↑/↓ · →/← expand/collapse · Enter/Space open · F2 rename (ADR 0009 amendments).
 
@@ -52,10 +56,16 @@ apps/app/                 Expo SDK 58 + Expo Router (iOS + web)
   app/                    routes (_layout.tsx, index.tsx = workspace: sidebar + editor + quick open)
   components/library/     Sidebar.tsx, QuickOpen.tsx (RN primitives), dnd.web.tsx / dnd.tsx (drag-and-drop split)
   components/account/     AccountView.tsx: Account & Devices panel (RN primitives, takes an AccountBackend)
-  src/account/            account.web.ts (desktop bridge or unavailable), account.native.ts (unavailable until M6)
+  app/*.native.tsx        iOS stack (ADR 0016): _layout (WorkspaceProvider), index (library), editor, settings;
+                          editor.tsx / settings.tsx are web fallbacks that redirect to / (Expo Router needs a non-platform sibling)
+  src/native/             iOS: library.ts (NativeLibrary), nativeFs.ts + expoFs.ts, sync.ts, account.ts, settings.ts,
+                          fonts.ts (inline Plex Mono for the WebView), services.ts (singletons + AppState wiring)
+  src/WorkspaceContext.tsx, src/editorFlush.ts   iOS shared workspace; flushing the editor across the DOM bridge
+  test/                   Vitest on Node: nodeFs.ts (NativeFs on real files), library, nativeSync (real server), nativeSimulation
+  src/account/            account.web.ts (desktop bridge or unavailable), account.native.ts (NativeAccount)
   components/editor/      MarkdownEditor.tsx ('use dom' CodeMirror 6), focus.ts (dimming, typewriter), theme.ts, fonts.ts
   src/storage/            platform adapters: documentStore.web.ts (Electron IPC or localStorage),
-                          documentStore.native.ts (in-memory stubs until M6); documentBackend.ts,
+                          documentStore.native.ts (NativeLibrary, ADR 0015); documentBackend.ts,
                           libraryBackend.ts, settingsStore.ts
   src/useWorkspace.ts     library listing + open document session (switch/rename/trash vs. saves)
 apps/desktop/             Electron 45 shell
@@ -91,7 +101,7 @@ docs/decisions/           ADRs
 - **Sync:** `packages/core/test/sync.test.ts` (planner table, executor races, randomised two-device simulation with in-memory fakes in `syncFakes.ts`), `apps/server/test/sync.test.ts` (API, CAS, collisions, path-rule agreement with core), `apps/desktop/test/sync.test.ts` (two real libraries + real server: conflicts, offline, delete vs edit, renames, open documents), `e2e/sync.spec.ts` (real Electron). e2e sets `MARGIN_SYNC_INTERVAL_MS` high so syncs happen only when the test asks.
 - **Desktop sign-in:** `apps/desktop/test/account.test.ts` runs the full loopback round trip against the real server app and a mock GitHub over HTTP (a test-only import of `apps/server/test`), with a fake `SecretBox`. `e2e/account.spec.ts` does it with the real Electron app and real `safeStorage`; `shell.openExternal` is stubbed in main and the test plays the browser with `browse()`.
 - **e2e gotchas:** the newest `.md` in the library opens at launch (ADR 0008), so order fixture writes accordingly. Playwright's Electron traces have no DOM snapshots: for flakes, instrument the page (focus/mutation logs) and run `--repeat-each`. react-native-web blurs a single-line `TextInput` one macrotask after Enter unless `blurOnSubmit={false}`.
-- **iOS:** not runnable here (no Xcode). `cd apps/app && npx expo export --platform ios` at least proves the native and DOM bundles compile.
+- **iOS:** not runnable here (no Xcode). Logic is tested on Node behind `NativeFs` (`apps/app/test`: `library`, `nativeSync` against the real server incl. iPhone+Mac, `nativeSimulation` = the randomised two-device sync simulation with the native adapter, `SYNC_SEEDS_NATIVE=1000` for a longer run). Bundling: `cd apps/app && npx expo export --platform ios --output-dir <a temp dir>`. **Always pass `--output-dir`**: the default `dist/` is the web export the desktop app packages, and an iOS export there breaks `pnpm build:desktop`/e2e until `pnpm build:web` is rerun. Then `npx expo-doctor@latest` (expect 20/20). On-device checks are the owner's: `docs/ios-testing.md`.
 - Before pushing: `pnpm typecheck && pnpm test`, plus `pnpm build:desktop && MARGIN_SHOW_INACTIVE=1 pnpm test:e2e && pnpm verify:packaged` if desktop, app or editor code changed.
 
 ## Known limits

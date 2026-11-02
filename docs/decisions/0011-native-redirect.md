@@ -37,3 +37,6 @@ We chose loopback over `margin://` for Electron because:
 - The server accepts any loopback port. That is fine: the code is useless without the verifier, which never leaves the app.
 - One sign-in at a time per app. Clicking Sign In again cancels the pending one, and an abandoned attempt times out after 5 minutes.
 - The browser keeps one pending sign-in cookie. Starting two sign-ins in the same browser at once makes the first one fail its state check, which is harmless.
+
+## Amendments (2026-11-02, M6)
+- `margin://auth/callback` is **enabled** (`CUSTOM_SCHEME_ENABLED = true`) now that the iOS app registers the scheme. Expo Go needs no `exp://` allowlist entry (ASWebAuthenticationSession captures the callback itself). Scheme-claim risk and mitigations: ADR 0017.

@@ -18,3 +18,6 @@ On the development machine (2026-11-02):
 - Larger desktop binary (~250 MB) than Tauri would give.
 - iOS runtime behaviour cannot be verified by agents on this machine. M5 needs a human with a device, or EAS.
 - Revisit if Rust or Xcode is installed later; a Tauri spike would be a superseding ADR.
+
+## Amendments (2026-11-02, M6)
+- M6 was built with Expo Go only. iOS checks here are `expo export --platform ios`, `expo-doctor`, and Node unit/integration tests of the native storage, sync and sign-in logic (behind a `NativeFs` abstraction). Everything on-device is in the owner's checklist, `docs/ios-testing.md`.

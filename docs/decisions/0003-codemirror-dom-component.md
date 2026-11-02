@@ -30,3 +30,7 @@ If the font asset approach breaks inside the iOS WebView, the fallback is to inl
 ## Consequences
 - Focus mode (M2) is written once as CodeMirror extensions and tested in Vitest/jsdom.
 - On iOS the DOM bundle is plain JS (not Hermes bytecode), so startup cost is to be measured.
+
+## Amendments (2026-11-02, M6)
+- **Font in the iOS WebView:** the asset-URL approach does **not** work in exported iOS builds (the DOM page looks for `<hash>.woff2` in `www.bundle/`, but the export puts fonts in `assets/`; the fetch is a 404). The fallback this ADR named is now used on iOS: the native side passes `@font-face` rules with `data:` URIs (ADR 0016). Web/Electron unchanged.
+- Keyboard avoidance and the accessory bar are designed in ADR 0016; typing latency on a device is still unmeasured (`docs/ios-testing.md`).

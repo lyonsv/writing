@@ -56,7 +56,7 @@ EOF
 pnpm dev:server            # http://127.0.0.1:3000, in-memory store (forgets devices on restart)
 pnpm dev:desktop           # in another terminal; Margin › Sign In…
 ```
-The desktop app talks to `http://127.0.0.1:3000` by default. To point it elsewhere, set `MARGIN_SERVER_URL`, or add `"serverUrl": "https://<your-domain>"` to `settings.json` in the app's userData folder (`~/Library/Application Support/Margin/` when packaged).
+In development (`pnpm dev:desktop`, unpackaged) the desktop app talks to `http://127.0.0.1:3000`; the packaged app defaults to production `https://margin-sync.vercel.app`, and iOS release builds do too (Expo Go uses `127.0.0.1:3000` unless you pick a server in Settings › Server; see `docs/ios-testing.md`). To point it elsewhere, set `MARGIN_SERVER_URL`, or add `"serverUrl": "https://<your-domain>"` to `settings.json` in the app's userData folder (`~/Library/Application Support/Margin/` when packaged).
 
 ## 5. Vercel: what's provisioned, and what's left for you
 Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with the logged-in CLI (`npx vercel@latest`, run from the repo root, which is linked to the project).
@@ -89,7 +89,7 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
    ```sh
    npx vercel@latest deploy --prod
    ```
-4. Check it: `curl -s https://margin-sync.vercel.app/api/me` → `401 {"error":"unauthorized"}`. Then, in Margin, set `"serverUrl": "https://margin-sync.vercel.app"` in `~/Library/Application Support/Margin/settings.json` (or `MARGIN_SERVER_URL`) and use Margin › Sign In….
+4. Check it: `curl -s https://margin-sync.vercel.app/api/me` → `401 {"error":"unauthorized"}`. Then use Margin › Sign In… in the packaged app (it defaults to production; a dev build needs `MARGIN_SERVER_URL=https://margin-sync.vercel.app`).
 
 **Sync errors** ("the server's copy … is older than this Mac's"): see [sync-recovery.md](sync-recovery.md).
 

@@ -18,3 +18,6 @@ One file per decision: `NNNN-title.md` with **Status**, **Context**, **Decision*
 | [0012](0012-token-storage.md) | Token storage: hashed device records in private Vercel Blob; `safeStorage` on desktop (amended: HMAC pepper) | Accepted |
 | [0013](0013-sync.md) | Sync: manifest CAS on private Blob, three-way engine in core, guarded desktop client | Accepted |
 | [0014](0014-vercel-deploy.md) | Vercel deployment: project settings, `vercel.json`, environments, protection | Accepted |
+| [0015](0015-ios-storage.md) | iOS storage: library in the app's Documents, atomic writes, Recently Deleted instead of a Trash | Accepted |
+| [0016](0016-ios-editor-keyboard.md) | iOS editor: keyboard and accessory bar, inline Plex Mono, Dynamic Type, Expo Router stack | Accepted |
+| [0017](0017-ios-native-redirect.md) | iOS sign-in: `margin://auth/callback` via ASWebAuthenticationSession; scheme-claim risk | Accepted |

@@ -25,7 +25,7 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 ## M4 — Authentication (before any server is exposed)
 Nothing server-side ships without this. ADRs 0010 (model), 0011 (native redirect), 0012 (token storage); owner steps in `docs/server-setup.md`. Built and tested locally only (no deploy, no real OAuth App yet).
 - [x] Sign in with GitHub (OAuth, state + PKCE), server-side allowlist on login **and** immutable id (`ALLOWED_GITHUB_LOGINS=login:id`)
-- [x] Server issues per-device, revocable tokens (hashed in private Blob); desktop stores token via Electron `safeStorage`, main process only. iOS (`expo-secure-store`, `margin://` redirect) → M6
+- [x] Server issues per-device, revocable tokens (hashed in private Blob); desktop stores token via Electron `safeStorage`, main process only. iOS (`expo-secure-store`, `margin://` redirect): done in M6
 - [x] Device list + revoke endpoints; rolling 90-day expiry refreshed on use; desktop Account & Devices panel, Sign In… / Sign Out menu items
 - [~] Any hosted web build is also behind sign-in: server-side cookie session done (`/api/auth/web/start`, HttpOnly/Secure/SameSite=Lax, CSRF Origin check); serving the static build behind it → M8
 - [x] Tests: no/malformed/forged/revoked/expired token, wrong-user and non-allowlisted GitHub identities, reused code, wrong PKCE verifier, bad state, open redirects; full desktop round trip e2e against a local server + mock GitHub
@@ -40,10 +40,15 @@ ADR 0013. Built and tested locally only (no deploy).
 - [ ] Preview deploys on Vercel; secrets only in Vercel env vars → with the M8 deploy
 
 ## M6 — iOS (Expo)
-- [ ] iOS app sharing UI + core packages; develop with Expo Go / dev build
-- [ ] Shared CodeMirror DOM editor + focus mode on iOS
-- [ ] Local store (`expo-file-system`) + sync + sign-in on iOS
-- [ ] Re-enable the `margin://auth/callback` redirect on the server (`CUSTOM_SCHEME_ENABLED` in `apps/server/src/redirects.ts`, disabled in M4 because nothing claims the scheme yet) when the iOS app registers it
+ADRs 0015 (storage, Recently Deleted), 0016 (editor, keyboard, navigation), 0017 (sign-in redirect). Built with Expo Go only; **nothing has run on a device yet**, so the owner's checklist is `docs/ios-testing.md`.
+- [x] iOS app sharing UI + core packages: Expo Router stack (library, editor, settings) reusing Sidebar (touch mode, Move to…), QuickOpen (search), AccountView
+- [x] Shared CodeMirror DOM editor + focus mode on iOS: keyboard-aware sizing, accessory bar (focus, scope, typewriter, done), typewriter centring above the keyboard, inline IBM Plex Mono, Dynamic Type, status bar hidden in focus mode
+- [x] Local store (`expo-file-system`, ADR 0015) with desktop-equivalent guarantees; Recently Deleted (30 days); settings file; flush on background
+- [x] Sync on iOS (core engine + shared HTTP client): foreground, after edits, pull-to-refresh, every 60 s while active; Reset Sync State
+- [x] Sign-in on iOS: `margin://auth/callback` via ASWebAuthenticationSession + PKCE + confirmation page, token in the Keychain; server URL setting (production default in release builds)
+- [x] Re-enable the `margin://auth/callback` redirect on the server (`CUSTOM_SCHEME_ENABLED`)
+- [x] Tests: native library on real files, sign-in + sync against the real server (iPhone↔iPhone, iPhone↔Mac), randomised native-adapter simulation; `expo export --platform ios` and `expo-doctor` clean
+- [ ] Owner: run `docs/ios-testing.md` on an iPhone with Expo Go (keyboard, font, typing latency, sign-in callback, flush on background)
 
 ## M7 — Polished product
 - [ ] Logo / wordmark (original design, SVG source in `assets/brand/`)
