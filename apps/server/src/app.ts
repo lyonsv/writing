@@ -3,6 +3,7 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { HTTPException } from 'hono/http-exception';
+import { matchedRoutes } from 'hono/route';
 
 import { CodeRepository } from './codes';
 import { NonceRepository } from './nonces';
@@ -29,6 +30,25 @@ export const PUBLIC_ROUTES: ReadonlySet<string> = new Set([
   'GET /api/auth/github/callback',
   'POST /api/auth/native/token',
 ]);
+
+/**
+ * Request body limit for every route, in bytes, keyed like `app.routes`
+ * (`METHOD /pattern`). A test fails if a registered route is missing here, so
+ * each new route (M5) has to pick its limit. Unknown paths get DEFAULT_BODY_LIMIT.
+ * Vercel caps request bodies at 4.5 MB regardless.
+ */
+export const DEFAULT_BODY_LIMIT = 1024;
+export const ROUTE_BODY_LIMITS: Readonly<Record<string, number>> = {
+  'GET /api/auth/native/start': 0,
+  'POST /api/auth/native/start': 2 * 1024,
+  'GET /api/auth/web/start': 0,
+  'GET /api/auth/github/callback': 0,
+  'POST /api/auth/native/token': 8 * 1024,
+  'GET /api/me': 0,
+  'GET /api/devices': 0,
+  'DELETE /api/devices/:id': 0,
+  'POST /api/auth/signout': 1024,
+};
 
 export type Logger = (event: string, fields?: Record<string, string | number | boolean>) => void;
 
@@ -149,6 +169,13 @@ export function createApp(deps: AppDeps): Hono<Env> {
     if (!c.res.headers.has('Content-Security-Policy')) {
       c.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
     }
+  });
+
+  // --- Body limits, per route (before anything reads a body).
+  app.use('*', async (c, next) => {
+    const route = matchedRoutes(c).filter((r) => r.method !== 'ALL').pop();
+    const maxSize = route ? (ROUTE_BODY_LIMITS[`${route.method} ${route.path}`] ?? DEFAULT_BODY_LIMIT) : DEFAULT_BODY_LIMIT;
+    return bodyLimit({ maxSize, onError: (cx) => cx.json({ error: 'payload_too_large' }, 413) })(c, next);
   });
 
   // --- The one auth gate. Deny by default.
@@ -344,7 +371,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   });
 
   /** Native step 3: one-time code + PKCE verifier → device token. */
-  app.post('/api/auth/native/token', limited('token'), bodyLimit({ maxSize: 8 * 1024 }), async (c) => {
+  app.post('/api/auth/native/token', limited('token'), async (c) => {
     const cfg = getConfig();
     let body: Record<string, unknown>;
     try {

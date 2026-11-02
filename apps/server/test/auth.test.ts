@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { PUBLIC_ROUTES, createApp } from '../src/app';
+import { DEFAULT_BODY_LIMIT, PUBLIC_ROUTES, ROUTE_BODY_LIMITS, createApp } from '../src/app';
 import { ConfigError } from '../src/config';
 import { CODE_TTL_MS } from '../src/codes';
 import { sha256Hex } from '../src/crypto';
@@ -683,6 +683,28 @@ describe('hygiene', () => {
     // Another client is unaffected.
     const other = await h.req('/api/auth/native/token', { method: 'POST', body: '{}', headers: { 'x-real-ip': '10.0.0.2', 'Content-Type': 'application/json' } });
     expect(other.status).toBe(400);
+  });
+
+  it('every registered route has an explicit body limit, enforced before auth', async () => {
+    const h = setup();
+    const routes = [...new Set(h.app.routes.filter((r) => r.method !== 'ALL').map((r) => `${r.method} ${r.path}`))];
+    for (const route of routes) expect(ROUTE_BODY_LIMITS[route], route).toBeTypeOf('number');
+    const { token } = await signIn(h);
+    for (const route of routes) {
+      const [method, path] = route.split(' ') as [string, string];
+      if (method === 'GET' || method === 'HEAD') continue; // a standard Request can't carry a GET body
+      const limit = ROUTE_BODY_LIMITS[route]!;
+      const res = await h.req(path.replace(':id', 'A'.repeat(22)), {
+        method,
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream', Origin: 'https://margin.test' },
+        body: 'x'.repeat(limit + 1),
+      });
+      expect(res.status, route).toBe(413);
+    }
+    // Unknown paths get the small default, also before auth.
+    const unknown = await h.req('/api/nope', { method: 'POST', body: 'x'.repeat(DEFAULT_BODY_LIMIT + 1) });
+    expect(unknown.status).toBe(413);
+    expect((await h.req('/api/nope', { method: 'POST', body: 'x' })).status).toBe(401);
   });
 
   it('fails closed with a generic 500 when configuration is incomplete', async () => {
