@@ -51,6 +51,29 @@ export class BlobStore implements KeyValueStore {
     }
   }
 
+  async getBytes(key: string): Promise<{ bytes: Uint8Array; etag: string } | null> {
+    const result = await this.client.get(key, { access: 'private', useCache: false });
+    if (!result || result.statusCode !== 200) return null;
+    return { bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()), etag: result.blob.etag };
+  }
+
+  async putBytes(key: string, bytes: Uint8Array, options: PutOptions = {}): Promise<{ etag: string }> {
+    try {
+      const result = await this.client.put(key, Buffer.from(bytes), {
+        access: 'private',
+        contentType: 'application/octet-stream',
+        addRandomSuffix: false,
+        allowOverwrite: !options.create,
+        cacheControlMaxAge: 60,
+        ...(options.ifMatch !== undefined ? { ifMatch: options.ifMatch } : {}),
+      });
+      return { etag: result.etag };
+    } catch (error) {
+      if (error instanceof BlobPreconditionFailedError) throw new PreconditionFailedError();
+      throw error;
+    }
+  }
+
   async delete(key: string): Promise<void> {
     await this.client.del(key);
   }

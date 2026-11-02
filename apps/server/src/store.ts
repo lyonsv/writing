@@ -29,6 +29,9 @@ export interface KeyValueStore {
   delete(key: string): Promise<void>;
   /** Every key starting with `prefix`. */
   list(prefix: string): Promise<string[]>;
+  /** Binary values (sync document bodies), same semantics as `get`/`put`. */
+  getBytes(key: string): Promise<{ bytes: Uint8Array; etag: string } | null>;
+  putBytes(key: string, bytes: Uint8Array, options?: PutOptions): Promise<{ etag: string }>;
 }
 
 export class PreconditionFailedError extends Error {
@@ -45,7 +48,7 @@ export class PreconditionFailedError extends Error {
  * against a remote store.
  */
 export class MemoryStore implements KeyValueStore {
-  private readonly items = new Map<string, StoredItem>();
+  private readonly items = new Map<string, StoredItem & { bytes?: Uint8Array }>();
   private seq = 0;
 
   async get(key: string): Promise<StoredItem | null> {
@@ -67,6 +70,19 @@ export class MemoryStore implements KeyValueStore {
   async delete(key: string): Promise<void> {
     await Promise.resolve();
     this.items.delete(key);
+  }
+
+  async getBytes(key: string): Promise<{ bytes: Uint8Array; etag: string } | null> {
+    await Promise.resolve();
+    const item = this.items.get(key);
+    if (!item) return null;
+    return { bytes: (item.bytes ?? new TextEncoder().encode(item.value)).slice(), etag: item.etag };
+  }
+
+  async putBytes(key: string, bytes: Uint8Array, options: PutOptions = {}): Promise<{ etag: string }> {
+    const { etag } = await this.put(key, '', options);
+    this.items.set(key, { value: '', etag, bytes: bytes.slice() });
+    return { etag };
   }
 
   async list(prefix: string): Promise<string[]> {

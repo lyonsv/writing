@@ -7,6 +7,8 @@ import { matchedRoutes } from 'hono/route';
 
 import { CodeRepository } from './codes';
 import { NonceRepository } from './nonces';
+import { MAX_DOCUMENT_BYTES, SyncConflictError, SyncLimitError, SyncRepository, type Precondition, type SyncEntry } from './sync';
+import { isSyncPath } from './syncPaths';
 import { ConfigError, isAllowed, type Config } from './config';
 import { PKCE_CHALLENGE, PKCE_VERIFIER, Pepper, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto';
 import { DeviceRepository, TOKEN_TTL_MS, cleanDeviceName, toDeviceInfo, type DeviceRecord, type Identity } from './devices';
@@ -48,7 +50,16 @@ export const ROUTE_BODY_LIMITS: Readonly<Record<string, number>> = {
   'GET /api/devices': 0,
   'DELETE /api/devices/:id': 0,
   'POST /api/auth/signout': 1024,
+  // Sync (ADR 0013). Documents over 4 MiB are refused (Vercel's body limit is 4.5 MB).
+  'GET /api/sync/manifest': 0,
+  'GET /api/sync/file': 0,
+  'PUT /api/sync/file': MAX_DOCUMENT_BYTES,
+  'DELETE /api/sync/file': 0,
+  'POST /api/sync/move': 4 * 1024,
 };
+
+/** `"12"`, `W/"12"` or `12` → `12`. */
+const revFrom = (header: string | undefined): string | undefined => header?.trim().replace(/^W\//, '').replace(/^"(.*)"$/, '$1') || undefined;
 
 export type Logger = (event: string, fields?: Record<string, string | number | boolean>) => void;
 
@@ -426,6 +437,88 @@ export function createApp(deps: AppDeps): Hono<Env> {
     endSessionCookie(c);
     log('device.signed_out');
     return c.body(null, 204);
+  });
+
+  // --- Sync (ADR 0013). All behind requireAuth like everything else.
+  const sync = new SyncRepository(deps.store, now);
+
+  const syncError = (c: Context, error: unknown) => {
+    if (error instanceof SyncConflictError) {
+      return error.kind === 'precondition'
+        ? c.json({ error: 'precondition_failed', current: error.current }, 412)
+        : c.json({ error: 'path_conflict', path: error.conflictingPath ?? null }, 409);
+    }
+    if (error instanceof SyncLimitError) return c.json({ error: 'too_large', message: error.message }, 413);
+    throw error;
+  };
+  const pathParam = (c: Context): string | null => {
+    const p = c.req.query('path');
+    return isSyncPath(p) ? p : null;
+  };
+
+  app.get('/api/sync/manifest', async (c) => {
+    const m = await sync.manifest();
+    const etag = `"m${m.seq}"`;
+    if (c.req.header('If-None-Match') === etag) return c.body(null, 304, { ETag: etag });
+    return c.json({ seq: m.seq, entries: m.entries }, 200, { ETag: etag });
+  });
+
+  app.get('/api/sync/file', async (c) => {
+    const path = pathParam(c);
+    if (!path) return c.json({ error: 'invalid_path' }, 400);
+    const got = await sync.get(path);
+    if (!got) return c.json({ error: 'not_found' }, 404);
+    return c.body(got.bytes as unknown as ArrayBuffer, 200, {
+      'Content-Type': 'application/octet-stream',
+      ETag: `"${got.entry.rev}"`,
+      'X-Margin-Entry': encodeURIComponent(JSON.stringify(got.entry)),
+    });
+  });
+
+  app.put('/api/sync/file', async (c) => {
+    const path = pathParam(c);
+    if (!path) return c.json({ error: 'invalid_path' }, 400);
+    const ifMatch = revFrom(c.req.header('If-Match'));
+    const ifNoneMatch = c.req.header('If-None-Match')?.trim();
+    let pre: Precondition;
+    if (ifMatch && !ifNoneMatch) pre = { ifMatch };
+    else if (ifNoneMatch === '*' && !ifMatch) pre = { ifNoneMatch: true };
+    else return c.json({ error: 'precondition_required' }, 428); // never a blind overwrite
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    try {
+      const entry: SyncEntry = await sync.put(path, bytes, pre);
+      return c.json({ entry }, 200, { ETag: `"${entry.rev}"` });
+    } catch (error) {
+      return syncError(c, error);
+    }
+  });
+
+  app.delete('/api/sync/file', async (c) => {
+    const path = pathParam(c);
+    if (!path) return c.json({ error: 'invalid_path' }, 400);
+    const ifMatch = revFrom(c.req.header('If-Match'));
+    if (!ifMatch) return c.json({ error: 'precondition_required' }, 428);
+    try {
+      return c.json({ entry: await sync.delete(path, ifMatch) });
+    } catch (error) {
+      return syncError(c, error);
+    }
+  });
+
+  app.post('/api/sync/move', async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid_request' }, 400);
+    }
+    const { from, to, ifMatch } = body ?? {};
+    if (!isSyncPath(from) || !isSyncPath(to) || typeof ifMatch !== 'string' || !ifMatch) return c.json({ error: 'invalid_request' }, 400);
+    try {
+      return c.json({ entry: await sync.move(from, to, ifMatch) });
+    } catch (error) {
+      return syncError(c, error);
+    }
   });
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
