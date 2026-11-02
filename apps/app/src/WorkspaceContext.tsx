@@ -1,11 +1,11 @@
 import { createContext, useContext, useEffect, type ReactNode } from 'react';
 
-import { setWorkspaceFlush } from './native/services';
+import { setWorkspaceFlush } from './local/lifecycle';
 import { useSettings } from './useSettings';
 import { useWorkspace } from './useWorkspace';
 
 /**
- * iOS: one workspace (settings, library listing, open document and its save
+ * Phone layouts (iOS, and the web app on a phone): one workspace (settings, library listing, open document and its save
  * pipeline) shared by the stack's screens: the library list, the editor and
  * settings. Desktop/web keep everything in one screen and don't use this.
  */

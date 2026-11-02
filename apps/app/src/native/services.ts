@@ -8,6 +8,7 @@ import { AppState } from 'react-native';
 
 import { NativeAccount, type SecretStore } from './account';
 import { ExpoFs } from './expoFs';
+import { flushWorkspace } from '../local/lifecycle';
 import { NativeLibrary } from '../local/library';
 import { FileSettingsStore } from '../local/settings';
 import { NativeSyncService } from '../local/sync';
@@ -54,14 +55,7 @@ export const account = new NativeAccount({
   redirectUri: NATIVE_CUSTOM_SCHEME_REDIRECT,
 });
 
-/** Flushes the editor and the open document's saves; set by the workspace. */
-let flushWorkspace: () => Promise<boolean> = async () => true;
-export function setWorkspaceFlush(fn: () => Promise<boolean>): () => void {
-  flushWorkspace = fn;
-  return () => {
-    if (flushWorkspace === fn) flushWorkspace = async () => true;
-  };
-}
+export { setWorkspaceFlush } from '../local/lifecycle';
 
 export const sync = new NativeSyncService({
   library,

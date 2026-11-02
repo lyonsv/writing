@@ -11,6 +11,7 @@ import { StyleSheet, Text, View, useColorScheme } from 'react-native';
 import { AccountView } from '../components/account/AccountView';
 import MarkdownEditor, { type EditorCommand } from '../components/editor/MarkdownEditor';
 import { QuickOpen } from '../components/library/QuickOpen';
+import { WebPhoneApp } from '../components/phone/WebPhoneApp';
 import { Sidebar, type SidebarColors } from '../components/library/Sidebar';
 import { getAccountBackend } from '../src/account/account';
 import { getDesktopBridge, getLibraryBackend } from '../src/storage/documentStore';
@@ -21,7 +22,19 @@ import { useWorkspace } from '../src/useWorkspace';
 const LIGHT: SidebarColors = { background: '#f3f3f1', text: '#1f1f1f', muted: '#8a8a86', active: '#e3e3df', danger: '#c2410c' };
 const DARK: SidebarColors = { background: '#161617', text: '#d9d9d6', muted: '#77776f', active: '#2a2a2c', danger: '#f97316' };
 
-export default function EditorScreen() {
+/**
+ * Web entry. Desktop (Electron) and wide browser windows get the workspace below;
+ * a phone-sized browser (the installed web app, ADR 0020) gets the same screens
+ * as iOS. Decided once at start, so rotating doesn't remount the editor.
+ */
+export default function Index() {
+  const [phone] = useState(
+    () => getDesktopBridge() === undefined && typeof window !== 'undefined' && window.matchMedia?.('(max-width: 699px)').matches === true,
+  );
+  return phone ? <WebPhoneApp /> : <DesktopWorkspace />;
+}
+
+function DesktopWorkspace() {
   const dark = useColorScheme() === 'dark';
   const { settings, loaded, update, toggleFocus, toggleSidebar } = useSettings();
   const ws = useWorkspace(settings, loaded, update);
