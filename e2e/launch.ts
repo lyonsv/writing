@@ -18,8 +18,13 @@ export const newLibrary = () => mkdtempSync(path.join(tmpdir(), 'margin-e2e-lib-
  * disable `--inspect`/`--remote-debugging` style attachment. It is checked
  * separately by `pnpm --filter @margin/desktop verify:packaged`.
  */
-export async function launch(libraryDir: string, extraEnv: Record<string, string> = {}): Promise<ElectronApplication> {
-  const userDataDir = mkdtempSync(path.join(tmpdir(), 'margin-e2e-ud-'));
+export const newUserData = () => mkdtempSync(path.join(tmpdir(), 'margin-e2e-ud-'));
+
+export async function launch(
+  libraryDir: string,
+  extraEnv: Record<string, string> = {},
+  userDataDir: string = newUserData(),
+): Promise<ElectronApplication> {
   const env = {
     ...process.env,
     MARGIN_LIBRARY_DIR: libraryDir,
@@ -44,4 +49,13 @@ export async function quitAndWait(app: ElectronApplication): Promise<void> {
   const exited = new Promise((resolve) => proc.once('exit', resolve));
   await app.evaluate(({ app: a }) => a.quit());
   await exited;
+}
+
+/** Clicks an application-menu item by id, as a user would. */
+export async function clickMenu(app: ElectronApplication, id: string): Promise<void> {
+  await app.evaluate(({ BrowserWindow, Menu }, itemId) => {
+    const item = Menu.getApplicationMenu()?.getMenuItemById(itemId);
+    if (!item) throw new Error(`No menu item ${itemId}`);
+    item.click(undefined, BrowserWindow.getAllWindows()[0]);
+  }, id);
 }
