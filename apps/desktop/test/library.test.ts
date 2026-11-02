@@ -333,3 +333,54 @@ describe('FileSystemLibrary long and multibyte names', () => {
     expect(path.basename(tmp)).toMatch(/^\.margin-[0-9a-f]{12}\.tmp$/);
   });
 });
+
+describe('FileSystemLibrary case-only renames', () => {
+  // Only meaningful on a case-insensitive volume (the macOS default).
+  const caseInsensitive = () => {
+    writeFileSync(path.join(root, 'probe.md'), '');
+    const yes = existsSync(path.join(root, 'PROBE.md'));
+    rmSync(path.join(root, 'probe.md'));
+    return yes;
+  };
+
+  it('renames a document to a different case, keeping content and tracking', async () => {
+    if (!caseInsensitive()) return;
+    writeFileSync(path.join(root, 'a.md'), 'A');
+    await lib.open('a.md');
+    await lib.rename('a.md', 'A.md');
+    expect(readdirSync(root)).toEqual(['A.md']);
+    expect(readFileSync(path.join(root, 'A.md'), 'utf8')).toBe('A');
+    // The open document's known version followed it: a save is not a conflict.
+    expect(await lib.save('A.md', 'A2')).toEqual({ status: 'saved', path: 'A.md' });
+  });
+
+  it('renames a folder to a different case, with its contents', async () => {
+    if (!caseInsensitive()) return;
+    await lib.createFolder('notes');
+    writeFileSync(path.join(root, 'notes', 'x.md'), 'x');
+    await lib.rename('notes', 'Notes');
+    expect(readdirSync(root)).toEqual(['Notes']);
+    expect(readFileSync(path.join(root, 'Notes', 'x.md'), 'utf8')).toBe('x');
+  });
+
+  it('works without hard links too, and leaves no temp files', async () => {
+    if (!caseInsensitive()) return;
+    const l = new FileSystemLibrary(root, {
+      link: async () => Promise.reject(Object.assign(new Error('no'), { code: 'ENOTSUP' })),
+    });
+    await l.init();
+    writeFileSync(path.join(root, 'draft.md'), 'd');
+    await l.rename('draft.md', 'Draft.md');
+    expect(readdirSync(root)).toEqual(['Draft.md']);
+    expect(readFileSync(path.join(root, 'Draft.md'), 'utf8')).toBe('d');
+  });
+
+  it('still refuses to rename onto a different existing file', async () => {
+    writeFileSync(path.join(root, 'a.md'), 'A');
+    writeFileSync(path.join(root, 'b.md'), 'B');
+    await expect(lib.rename('a.md', 'b.md')).rejects.toMatchObject({ code: 'exists' });
+    await expect(lib.rename('a.md', 'B.md')).rejects.toMatchObject({ code: 'exists' });
+    expect(readFileSync(path.join(root, 'b.md'), 'utf8')).toBe('B');
+    expect(readdirSync(root).sort()).toEqual(['a.md', 'b.md']);
+  });
+});

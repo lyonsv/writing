@@ -345,3 +345,29 @@ test('long and multibyte names: documents near the 255-byte limit save; names ar
   expect(read(path.join(lib, `${ok}.md`))).toBe('s');
   await quitAndWait(app);
 });
+
+test('case-only rename (a.md → A.md) works on a case-insensitive volume, including the open document', async () => {
+  const { lib, app, page } = await setup({ 'a.md': 'A', 'notes/x.md': 'x' });
+  await showSidebar(app, page);
+  await openViaSidebar(page, 'a.md');
+  await stubContextMenuChoice(app, 'Rename…');
+  await row(page, 'a.md').click({ button: 'right' });
+  await page.getByTestId('library-rename-input').fill('A');
+  await page.getByTestId('library-rename-input').press('Enter');
+  await expect(row(page, 'A.md')).toBeVisible();
+  await expect.poll(() => currentDocument(page)).toBe('A.md');
+  expect(readdirSync(lib).filter((f) => !f.startsWith('.')).sort()).toEqual(['A.md', 'notes']);
+  await expect(page.getByTestId('library-error')).toHaveCount(0);
+  // Typing after the rename saves into A.md.
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('End');
+  await page.keyboard.type('!');
+  await expect.poll(() => read(path.join(lib, 'A.md'))).toBe('A!');
+
+  await row(page, 'notes').click({ button: 'right' });
+  await page.getByTestId('library-rename-input').fill('Notes');
+  await page.getByTestId('library-rename-input').press('Enter');
+  await expect(row(page, 'Notes')).toBeVisible();
+  expect(readdirSync(lib).filter((f) => !f.startsWith('.')).sort()).toEqual(['A.md', 'Notes']);
+  await quitAndWait(app);
+});

@@ -341,8 +341,13 @@ export class FileSystemLibrary implements DocumentStore {
     const [first, second] = [srcKey, dstKey].sort() as [string, string];
     await this.queue.run(first, () =>
       this.queue.run(second, async () => {
-        if (stat.isDirectory()) {
-          this.assertFolderPath(dstKey);
+        if (stat.isDirectory()) this.assertFolderPath(dstKey);
+        else this.assertDocumentPath(dstKey);
+        const existing = await lstatOrNull(dst);
+        if (existing && existing.dev === stat.dev && existing.ino === stat.ino) {
+          // Case-only rename on a case-insensitive volume (`a.md` → `A.md`): `dst` *is* `src`.
+          await this.renameViaTemp(src, dst, stat.isDirectory(), to);
+        } else if (stat.isDirectory()) {
           // Claim the name exclusively, then rename onto the (empty) claimed dir.
           // If anything appeared there meanwhile, rename fails with ENOTEMPTY.
           try {
@@ -358,7 +363,6 @@ export class FileSystemLibrary implements DocumentStore {
             throw error;
           }
         } else {
-          this.assertDocumentPath(dstKey);
           // Never replaces an existing file (link(), or O_EXCL claim + rename fallback).
           try {
             await moveNoReplace(src, dst, this.link);
@@ -372,6 +376,34 @@ export class FileSystemLibrary implements DocumentStore {
         this.rebaseTracked(srcKey, dstKey);
       }),
     );
+  }
+
+  /**
+   * Renames `src` to a differently-cased `dst` that resolves to the same file or
+   * folder. Goes through a unique hidden temp name in the same folder, so it works
+   * the same on every filesystem, and still never replaces anything: if something
+   * else claims `dst` in between, the item is put back where it was.
+   */
+  private async renameViaTemp(src: string, dst: string, isDirectory: boolean, to: string): Promise<void> {
+    const tmp = tempPathFor(src);
+    await fs.rename(src, tmp); // tmp is a fresh random name: nothing to replace
+    try {
+      if (isDirectory) {
+        await fs.mkdir(dst); // EEXIST if anything appeared
+        try {
+          await fs.rename(tmp, dst);
+        } catch (error) {
+          await fs.rmdir(dst).catch(() => undefined);
+          throw error;
+        }
+      } else {
+        await moveNoReplace(tmp, dst, this.link);
+      }
+    } catch (error) {
+      await fs.rename(tmp, src).catch(() => undefined);
+      if (code(error) === 'EEXIST') throw new DocumentStoreError('exists', `${to} already exists`);
+      throw error;
+    }
   }
 
   /** `trash` lets the main process move items to the macOS Trash instead of unlinking. */
