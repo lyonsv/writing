@@ -4,13 +4,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 
 ## M0 — Foundations
 - [x] Research platform best practices → `docs/research/best-practices.md`
-- [ ] Monorepo scaffold (pnpm workspaces, TS, lint, tests)
-- [ ] Architecture decision records in `docs/decisions/`
+- [x] Monorepo scaffold (pnpm workspaces, TS, tests) — lint not yet set up
+- [x] Architecture decision records in `docs/decisions/`
 
 ## M1 — Desktop app running
-- [ ] Electron shell launching the shared React app
-- [ ] Editor with writing font, markdown syntax styling
-- [ ] Fullscreen
+- [x] Electron shell launching the shared React app
+- [x] Editor with writing font, markdown syntax styling
+- [x] Fullscreen
 
 ## M2 — Focus mode
 - [ ] Sentence / paragraph focus dimming

@@ -154,3 +154,17 @@ test('follows the OS colour scheme', async () => {
   expect(light).toBe('rgb(251, 251, 250)');
   expect(dark).toBe('rgb(27, 27, 28)');
 });
+
+test('View > Enter Full Screen toggles native fullscreen', async () => {
+  const isFull = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFullScreen());
+  const clickItem = () =>
+    app.evaluate(({ BrowserWindow, Menu }) => {
+      const item = Menu.getApplicationMenu()!.getMenuItemById('toggle-fullscreen')!;
+      item.click(undefined, BrowserWindow.getAllWindows()[0]);
+    });
+  expect(await isFull()).toBe(false);
+  await clickItem();
+  await expect.poll(isFull, { timeout: 10_000 }).toBe(true);
+  await clickItem();
+  await expect.poll(isFull, { timeout: 10_000 }).toBe(false);
+});
