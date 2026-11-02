@@ -115,6 +115,11 @@ export class DeviceRepository {
    * not distinguish these cases to the client.
    */
   async authenticate(token: string): Promise<DeviceRecord | null> {
+    return (await this.authenticateAndTouch(token))?.record ?? null;
+  }
+
+  /** Like `authenticate`, and says whether this call rolled the expiry forward (web: re-issue the cookie). */
+  async authenticateAndTouch(token: string): Promise<{ record: DeviceRecord; touched: boolean } | null> {
     const m = TOKEN.exec(token);
     if (!m) return null;
     const item = await this.store.get(key(m[1]!));
@@ -128,17 +133,17 @@ export class DeviceRepository {
       const touched: DeviceRecord = { ...record, lastUsedAt: t, expiresAt: t + TOKEN_TTL_MS };
       try {
         await this.store.put(key(record.id), JSON.stringify(touched), { ifMatch: item.etag });
-        return touched;
+        return { record: touched, touched: true };
       } catch (error) {
         if (!(error instanceof PreconditionFailedError)) throw error;
         // Someone else wrote first (another request's touch, or a revocation): re-read.
         const again = await this.store.get(key(record.id));
         const fresh = again ? parseRecord(again.value) : null;
         if (!fresh || fresh.revokedAt !== undefined || fresh.expiresAt <= t) return null;
-        return fresh;
+        return { record: fresh, touched: true }; // another request touched it just now
       }
     }
-    return record;
+    return { record, touched: false };
   }
 
   /** Live (unrevoked, unexpired) devices of this user, newest first. Prunes old tombstones. */

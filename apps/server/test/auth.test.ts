@@ -585,6 +585,29 @@ describe('hosted web cookie session', () => {
     expect(((await me.json()) as { device: { kind: string; name: string } }).device).toMatchObject({ kind: 'web', name: 'Web (Safari)' });
   });
 
+  it('re-issues the session cookie with a refreshed Max-Age when the expiry rolls', async () => {
+    let t = Date.now();
+    const h = setup({ now: () => t });
+    const { jar } = await webSignIn(h);
+    const maxAge = (res: Response) => {
+      const line = res.headers.getSetCookie().find((c) => c.startsWith('__Host-margin_session='));
+      return line ? Number(/Max-Age=(\d+)/.exec(line)![1]) : undefined;
+    };
+    // Within the touch interval: no write, no new cookie.
+    t += 10 * 60 * 1000;
+    expect(maxAge(await h.req('/api/me', { headers: { Cookie: jar.header() } }))).toBeUndefined();
+    // 80 days later the expiry rolls, and the cookie with it (90 days again).
+    t += 80 * DAY;
+    const rolled = await h.req('/api/me', { headers: { Cookie: jar.header() } });
+    expect(rolled.status).toBe(200);
+    expect(maxAge(rolled)).toBe(Math.floor(TOKEN_TTL_MS / 1000));
+    const cookie = rolled.headers.getSetCookie().find((c) => c.startsWith('__Host-margin_session='))!;
+    for (const attr of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/']) expect(cookie).toContain(attr);
+    // Without that, the browser would have dropped the cookie at day 90.
+    t += 80 * DAY;
+    expect((await h.req('/api/me', { headers: { Cookie: jar.header() } })).status).toBe(200);
+  });
+
   it('requires a same-origin Origin header for cookie-authenticated writes (CSRF)', async () => {
     const h = setup();
     const { jar } = await webSignIn(h);

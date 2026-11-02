@@ -173,10 +173,16 @@ export function createApp(deps: AppDeps): Hono<Env> {
       }
     }
     if (!token) return unauthorized(c);
-    const device = await devices.authenticate(token);
+    const auth = await devices.authenticateAndTouch(token);
+    const device = auth?.record;
     // The allowlist is re-checked on every request: removing someone from
     // ALLOWED_GITHUB_LOGINS cuts off their existing devices immediately.
-    if (!device || !isAllowed(cfg.allowedUsers, device.login, device.githubId)) return unauthorized(c);
+    if (!auth || !device || !isAllowed(cfg.allowedUsers, device.login, device.githubId)) return unauthorized(c);
+    // Web sessions roll like device tokens: when the expiry moves, so does the cookie's Max-Age.
+    if (via === 'cookie' && auth.touched) {
+      const maxAge = Math.max(0, Math.floor((device.expiresAt - now()) / 1000));
+      setCookie(c, cookieNames().session, token, { ...cookieBase(), maxAge });
+    }
     c.set('device', device);
     c.set('via', via);
     await next();
