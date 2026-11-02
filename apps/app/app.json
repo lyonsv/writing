@@ -8,17 +8,37 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.lyonsv.margin"
+      "bundleIdentifier": "com.lyonsv.margin",
+      "icon": {
+        "light": "./assets/icon.png",
+        "dark": "./assets/icon-dark.png",
+        "tinted": "./assets/icon-tinted.png"
+      }
     },
     "web": {
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-asset"
-    ]
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#fbfbfa",
+          "dark": {
+            "image": "./assets/splash-icon-dark.png",
+            "backgroundColor": "#1b1b1c"
+          }
+        }
+      ]
+    ],
+    "icon": "./assets/icon.png"
   }
 }

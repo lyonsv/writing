@@ -11,9 +11,15 @@ importers:
       '@playwright/test':
         specifier: 1.64.1
         version: 1.64.1
+      '@resvg/resvg-js':
+        specifier: 2.6.2
+        version: 2.6.2
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
+      opentype.js:
+        specifier: 2.0.0
+        version: 2.0.0
       typescript:
         specifier: ~6.0.3
         version: 6.0.3
@@ -80,6 +86,9 @@ importers:
       expo-secure-store:
         specifier: ~58.0.2
         version: 58.0.2(expo@58.0.22)
+      expo-splash-screen:
+        specifier: ~58.0.12
+        version: 58.0.12(expo@58.0.22)(typescript@6.0.3)
       expo-status-bar:
         specifier: ~58.0.4
         version: 58.0.4(expo@58.0.22)(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
@@ -1409,6 +1418,82 @@ packages:
       '@types/react':
         optional: true
 
+  '@resvg/resvg-js-android-arm-eabi@2.6.2':
+    resolution: {integrity: sha512-FrJibrAk6v29eabIPgcTUMPXiEz8ssrAk7TXxsiZzww9UTQ1Z5KAbFJs+Z0Ez+VZTYgnE5IQJqBcoSiMebtPHA==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [android]
+
+  '@resvg/resvg-js-android-arm64@2.6.2':
+    resolution: {integrity: sha512-VcOKezEhm2VqzXpcIJoITuvUS/fcjIw5NA/w3tjzWyzmvoCdd+QXIqy3FBGulWdClvp4g+IfUemigrkLThSjAQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [android]
+
+  '@resvg/resvg-js-darwin-arm64@2.6.2':
+    resolution: {integrity: sha512-nmok2LnAd6nLUKI16aEB9ydMC6Lidiiq2m1nEBDR1LaaP7FGs4AJ90qDraxX+CWlVuRlvNjyYJTNv8qFjtL9+A==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@resvg/resvg-js-darwin-x64@2.6.2':
+    resolution: {integrity: sha512-GInyZLjgWDfsVT6+SHxQVRwNzV0AuA1uqGsOAW+0th56J7Nh6bHHKXHBWzUrihxMetcFDmQMAX1tZ1fZDYSRsw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@resvg/resvg-js-linux-arm-gnueabihf@2.6.2':
+    resolution: {integrity: sha512-YIV3u/R9zJbpqTTNwTZM5/ocWetDKGsro0SWp70eGEM9eV2MerWyBRZnQIgzU3YBnSBQ1RcxRZvY/UxwESfZIw==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@resvg/resvg-js-linux-arm64-gnu@2.6.2':
+    resolution: {integrity: sha512-zc2BlJSim7YR4FZDQ8OUoJg5holYzdiYMeobb9pJuGDidGL9KZUv7SbiD4E8oZogtYY42UZEap7dqkkYuA91pg==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@resvg/resvg-js-linux-arm64-musl@2.6.2':
+    resolution: {integrity: sha512-3h3dLPWNgSsD4lQBJPb4f+kvdOSJHa5PjTYVsWHxLUzH4IFTJUAnmuWpw4KqyQ3NA5QCyhw4TWgxk3jRkQxEKg==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+
+  '@resvg/resvg-js-linux-x64-gnu@2.6.2':
+    resolution: {integrity: sha512-IVUe+ckIerA7xMZ50duAZzwf1U7khQe2E0QpUxu5MBJNao5RqC0zwV/Zm965vw6D3gGFUl7j4m+oJjubBVoftw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@resvg/resvg-js-linux-x64-musl@2.6.2':
+    resolution: {integrity: sha512-UOf83vqTzoYQO9SZ0fPl2ZIFtNIz/Rr/y+7X8XRX1ZnBYsQ/tTb+cj9TE+KHOdmlTFBxhYzVkP2lRByCzqi4jQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+
+  '@resvg/resvg-js-win32-arm64-msvc@2.6.2':
+    resolution: {integrity: sha512-7C/RSgCa+7vqZ7qAbItfiaAWhyRSoD4l4BQAbVDqRRsRgY+S+hgS3in0Rxr7IorKUpGE69X48q6/nOAuTJQxeQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@resvg/resvg-js-win32-ia32-msvc@2.6.2':
+    resolution: {integrity: sha512-har4aPAlvjnLcil40AC77YDIk6loMawuJwFINEM7n0pZviwMkMvjb2W5ZirsNOZY4aDbo5tLx0wNMREp5Brk+w==}
+    engines: {node: '>= 10'}
+    cpu: [ia32]
+    os: [win32]
+
+  '@resvg/resvg-js-win32-x64-msvc@2.6.2':
+    resolution: {integrity: sha512-ZXtYhtUr5SSaBrUDq7DiyjOFJqBVL/dOBN7N/qmi/pO0IgiWW/f/ue3nbvu9joWE5aAKDoIzy/CxsY0suwGosQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@resvg/resvg-js@2.6.2':
+    resolution: {integrity: sha512-xBaJish5OeGmniDj9cW5PRa/PtmuVU3ziqrbr5xJj901ZDN4TosrVaNZpEiLZAxdfnhAe7uQ7QFWfjPe9d9K2Q==}
+    engines: {node: '>= 10'}
+
   '@rolldown/binding-android-arm-eabi@1.2.16':
     resolution: {integrity: sha512-ia3DwAs0OsMGS7+IConptSiyk9pEXkOx/AbJ2n/lAGxH3QkWQus1t8d7gnAT38FCU2sQu8lUbeR6AiZFv4JxaA==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2339,6 +2424,11 @@ packages:
     resolution: {integrity: sha512-6DBlSZwxk3J0y1j2s4XebAWNiwGaMp32NcWX7b2kJC2+EFf1g+pCcVmx8ylawt2tyLmbDHswm4MHOfrd4bqfvA==}
     engines: {node: ^22.13.0 || ^24.3.0 || ^26.0.0 || >=27.0.0}
 
+  expo-splash-screen@58.0.12:
+    resolution: {integrity: sha512-8TceS1bu1R0IuLP9VPa6cPeVytR/V/+NqhA4rOqwqDr5MIu6u4hryIxxLYWKwWXGLOzoPC6paaBiqnMsr+nLuw==}
+    peerDependencies:
+      expo: '*'
+
   expo-status-bar@58.0.4:
     resolution: {integrity: sha512-e6JJHziSSNb1v1VSzmDrAPf6GFoPRdVOIDrTCcK3bHfbJEAZGZ3YZXfqlorZtUFDT0z6NcjaZf0mPWifJZcqew==}
     peerDependencies:
@@ -3223,6 +3313,10 @@ packages:
   open@8.4.2:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
     engines: {node: '>=12'}
+
+  opentype.js@2.0.0:
+    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
+    hasBin: true
 
   ora@3.4.0:
     resolution: {integrity: sha512-eNwHudNbO1folBP3JsZ19v9azXWtQZjICdr3Q0TDPIaeBQ3mXLrh54wM+er0+hSp+dWKf+Z8KM58CYzEyIYxYg==}
@@ -5717,6 +5811,57 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.3.0
 
+  '@resvg/resvg-js-android-arm-eabi@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-android-arm64@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-darwin-arm64@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-darwin-x64@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-arm-gnueabihf@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-arm64-gnu@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-arm64-musl@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-x64-gnu@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-linux-x64-musl@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-win32-arm64-msvc@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-win32-ia32-msvc@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js-win32-x64-msvc@2.6.2':
+    optional: true
+
+  '@resvg/resvg-js@2.6.2':
+    optionalDependencies:
+      '@resvg/resvg-js-android-arm-eabi': 2.6.2
+      '@resvg/resvg-js-android-arm64': 2.6.2
+      '@resvg/resvg-js-darwin-arm64': 2.6.2
+      '@resvg/resvg-js-darwin-x64': 2.6.2
+      '@resvg/resvg-js-linux-arm-gnueabihf': 2.6.2
+      '@resvg/resvg-js-linux-arm64-gnu': 2.6.2
+      '@resvg/resvg-js-linux-arm64-musl': 2.6.2
+      '@resvg/resvg-js-linux-x64-gnu': 2.6.2
+      '@resvg/resvg-js-linux-x64-musl': 2.6.2
+      '@resvg/resvg-js-win32-arm64-msvc': 2.6.2
+      '@resvg/resvg-js-win32-ia32-msvc': 2.6.2
+      '@resvg/resvg-js-win32-x64-msvc': 2.6.2
+
   '@rolldown/binding-android-arm-eabi@1.2.16':
     optional: true
 
@@ -6747,6 +6892,16 @@ snapshots:
       expo: 58.0.22(@babel/core@7.29.7)(@expo/dom-webview@58.0.2)(@expo/metro-runtime@58.0.16)(expo-router@58.0.29)(react-dom@19.3.0(react@19.3.0))(react-native-web@0.21.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-native-webview@14.0.1(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@6.0.3)
 
   expo-server@58.0.6: {}
+
+  expo-splash-screen@58.0.12(expo@58.0.22)(typescript@6.0.3):
+    dependencies:
+      '@expo/config-plugins': 58.0.11(typescript@6.0.3)
+      '@expo/image-utils': 0.12.6(typescript@6.0.3)
+      expo: 58.0.22(@babel/core@7.29.7)(@expo/dom-webview@58.0.2)(@expo/metro-runtime@58.0.16)(expo-router@58.0.29)(react-dom@19.3.0(react@19.3.0))(react-native-web@0.21.4(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-native-webview@14.0.1(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(react-native-worklets@0.13.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@6.0.3)
+      xml2js: 0.6.0
+    transitivePeerDependencies:
+      - supports-color
+      - typescript
 
   expo-status-bar@58.0.4(expo@58.0.22)(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
     dependencies:
@@ -7824,6 +7979,8 @@ snapshots:
       define-lazy-prop: 2.0.0
       is-docker: 2.2.1
       is-wsl: 2.2.0
+
+  opentype.js@2.0.0: {}
 
   ora@3.4.0:
     dependencies:
