@@ -185,3 +185,39 @@ describe('GitHub rate limits → StoreBusyError → 503 + Retry-After (validator
     expect(await res.json()).toEqual({ error: 'busy' });
   });
 });
+
+describe('fresh reads bypass the conditional cache (validator MINOR)', () => {
+  it('get(key, { fresh: true }) sends no If-None-Match', async () => {
+    const gh = fakeGitHubContents();
+    const seen: Array<string | null> = [];
+    const store = new GitHubStore({
+      token: gh.token,
+      repo: gh.repo,
+      branch: gh.branch,
+      fetch: async (input, init) => {
+        if ((init?.method ?? 'GET') === 'GET') seen.push(new Headers(init?.headers).get('If-None-Match'));
+        return gh.fetch(input, init);
+      },
+    });
+    await store.put('sync/manifest.json', '{"seq":1}', { create: true });
+    await store.get('sync/manifest.json');
+    await store.get('sync/manifest.json');
+    await store.get('sync/manifest.json', { fresh: true });
+    expect(seen.slice(-3).map((h) => h !== null)).toEqual([false, true, false]);
+  });
+
+  it('GET /api/sync/manifest?fresh=1 reads the store fresh', async () => {
+    const { setup, signIn, bearer } = await import('./helpers');
+    const h = setup();
+    const { token } = await signIn(h);
+    const calls: Array<{ fresh?: boolean } | undefined> = [];
+    const realGet = h.store.get.bind(h.store);
+    h.store.get = async (key: string, opts?: { fresh?: boolean }) => {
+      if (key === 'sync/manifest.json') calls.push(opts);
+      return realGet(key, opts);
+    };
+    await h.req('/api/sync/manifest', bearer(token));
+    await h.req('/api/sync/manifest?fresh=1', bearer(token));
+    expect(calls.map((o) => o?.fresh === true)).toEqual([false, true]);
+  });
+});

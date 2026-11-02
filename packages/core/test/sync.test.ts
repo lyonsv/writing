@@ -340,3 +340,37 @@ describe('stale reads and rollbacks (validator M5 MAJOR 1)', () => {
     expect(report.stale.map((s) => s.path)).toEqual(['doc.md']);
   });
 });
+
+describe('a stale-looking manifest is re-read once, bypassing caches (validator MINOR)', () => {
+  it('a stale cached manifest causes no error: the fresh re-read wins', async () => {
+    const remote = new FakeRemote();
+    const a = { local: new FakeLocal(), base: new Map<string, BaseEntry>() };
+    a.local.files.set('x.md', enc('v1'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    const old = remote.history.length - 1;
+    a.local.files.set('x.md', enc('v2'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    remote.serveStale = () => old; // a cache keeps serving the older manifest
+    const report = await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    expect(report.stale).toEqual([]);
+    expect(report.settled).toBe(true);
+    expect(remote.freshReads).toBe(1);
+    expect(a.local.snapshot()).toEqual({ 'x.md': 'v2' });
+  });
+
+  it('a real rollback is still reported after the fresh re-read', async () => {
+    const remote = new FakeRemote();
+    const a = { local: new FakeLocal(), base: new Map<string, BaseEntry>() };
+    a.local.files.set('x.md', enc('v1'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    const old = remote.history.length - 1;
+    a.local.files.set('x.md', enc('v2'));
+    await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    remote.serveStale = () => old;
+    remote.staleEvenWhenFresh = true;
+    const report = await runSync({ local: a.local, remote, base: a.base, hash: sha });
+    expect(report.stale.map((x) => x.path)).toEqual(['x.md']);
+    expect(remote.freshReads).toBe(1);
+    expect(a.local.snapshot()).toEqual({ 'x.md': 'v2' });
+  });
+});

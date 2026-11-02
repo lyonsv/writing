@@ -39,8 +39,14 @@ export class FakeRemote implements SyncRemote {
     return { seq, entries: [...entries.values()].map(({ bytes: _b, ...e }) => ({ ...e })) };
   }
 
-  async manifest(): Promise<{ seq: number; entries: RemoteEntry[] }> {
-    const i = this.serveStale?.();
+  /** How many fresh (cache-bypassing) manifest reads were made. */
+  freshReads = 0;
+  /** If set, even fresh reads are stale (a real rollback rather than a cache). */
+  staleEvenWhenFresh = false;
+
+  async manifest(opts: { fresh?: boolean } = {}): Promise<{ seq: number; entries: RemoteEntry[] }> {
+    if (opts.fresh) this.freshReads++;
+    const i = opts.fresh && !this.staleEvenWhenFresh ? undefined : this.serveStale?.();
     const snap = i === undefined ? undefined : this.history[i];
     return snap ? this.view(snap.entries, snap.seq) : this.view(this.entries, this.seq);
   }

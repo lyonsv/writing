@@ -27,7 +27,8 @@ export interface PutOptions {
 }
 
 export interface KeyValueStore {
-  get(key: string): Promise<StoredItem | null>;
+  /** `fresh`: bypass any read cache (GitHubStore's conditional-request cache). */
+  get(key: string, opts?: { fresh?: boolean }): Promise<StoredItem | null>;
   put(key: string, value: string, options?: PutOptions): Promise<{ etag: string }>;
   /** Deleting a missing key is not an error. */
   delete(key: string): Promise<void>;

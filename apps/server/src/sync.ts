@@ -82,14 +82,15 @@ export class SyncRepository {
     private readonly now: () => number = Date.now,
   ) {}
 
-  private async read(): Promise<{ manifest: Manifest; etag: string | null }> {
-    const item = await this.store.get(MANIFEST);
+  private async read(fresh = false): Promise<{ manifest: Manifest; etag: string | null }> {
+    const item = await this.store.get(MANIFEST, fresh ? { fresh: true } : undefined);
     if (!item) return { manifest: { v: 1, seq: 0, entries: {} }, etag: null };
     return { manifest: JSON.parse(item.value) as Manifest, etag: item.etag };
   }
 
-  async manifest(): Promise<{ seq: number; entries: SyncEntry[] }> {
-    const { manifest } = await this.read();
+  /** `fresh`: bypass the store's read cache (a client double-checking a manifest that looked stale). */
+  async manifest(opts: { fresh?: boolean } = {}): Promise<{ seq: number; entries: SyncEntry[] }> {
+    const { manifest } = await this.read(opts.fresh === true);
     return { seq: manifest.seq, entries: Object.entries(manifest.entries).map(([p, e]) => toEntry(p, e)) };
   }
 

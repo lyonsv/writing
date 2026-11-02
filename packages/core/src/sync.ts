@@ -273,7 +273,8 @@ export class SyncRejectedError extends Error {
 
 export interface SyncRemote {
   /** `seq`: the server's highest rev (enables stale/rollback detection; ADR 0013 amendments). */
-  manifest(): Promise<{ seq?: number; entries: RemoteEntry[] }>;
+  /** `fresh`: bypass every cache on the way (used to double-check a manifest that looks stale). */
+  manifest(opts?: { fresh?: boolean }): Promise<{ seq?: number; entries: RemoteEntry[] }>;
   get(path: string): Promise<{ bytes: Uint8Array; entry: RemoteEntry } | null>;
   /** `ifMatch: null` = create-only (If-None-Match: *). */
   put(path: string, bytes: Uint8Array, ifMatch: string | null): Promise<RemoteEntry>;
@@ -349,13 +350,27 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   };
 
   for (let pass = 0; pass < (deps.maxPasses ?? 4); pass++) {
-    const [files, { seq, entries: manifest }] = await Promise.all([local.list(), remote.manifest()]);
-    const planned = planSync(
-      files.filter((f) => !rejected.has(f.path)),
-      base,
-      manifest.filter((e) => !rejected.has(e.path)),
-      { detectMoves, remoteSeq: seq },
-    );
+    const [files, first] = await Promise.all([local.list(), remote.manifest()]);
+    const plan = (m: { seq?: number; entries: RemoteEntry[] }) =>
+      planSync(
+        files.filter((f) => !rejected.has(f.path)),
+        base,
+        m.entries.filter((e) => !rejected.has(e.path)),
+        { detectMoves, remoteSeq: m.seq },
+      );
+    let current = first;
+    let planned = plan(current);
+    // Destructive local actions (trash, overwrite, move, conflict) and stale reports are
+    // only ever based on a FRESH manifest: a cached or lagging one could be older than
+    // the truth even when it's newer than our base. One extra read, only on runs
+    // that would change local files (and it also clears spurious "older" errors).
+    const needsFresh = (a: SyncAction) =>
+      a.type === 'stale' || a.type === 'delete-local' || a.type === 'move-local' || a.type === 'conflict' || (a.type === 'download' && a.expectLocal !== null);
+    if (planned.some(needsFresh)) {
+      current = await remote.manifest({ fresh: true });
+      planned = plan(current);
+    }
+    const manifest = current.entries;
     report.stale = planned.flatMap((a) => (a.type === 'stale' ? [{ path: a.path, reason: a.reason }] : []));
     // Throttled uploads wait for a later run; nothing about them changes now.
     report.held = planned.flatMap((a) => (a.type === 'upload' && deps.allowUpload && !deps.allowUpload(a.path) ? [a.path] : []));

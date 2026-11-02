@@ -540,7 +540,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   };
 
   app.get('/api/sync/manifest', async (c) => {
-    const m = await sync.manifest();
+    const m = await sync.manifest({ fresh: c.req.query('fresh') === '1' });
     const etag = `"m${m.seq}"`;
     if (c.req.header('If-None-Match') === etag) return c.body(null, 304, { ETag: etag });
     return c.json({ seq: m.seq, entries: m.entries }, 200, { ETag: etag });

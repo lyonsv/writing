@@ -107,8 +107,8 @@ export class GitHubStore implements KeyValueStore {
 
   // ------------------------------------------------------------------ reads
 
-  async getBytes(key: string): Promise<{ bytes: Uint8Array; etag: string } | null> {
-    const cached = this.cache.get(key);
+  async getBytes(key: string, opts: { fresh?: boolean } = {}): Promise<{ bytes: Uint8Array; etag: string } | null> {
+    const cached = opts.fresh ? undefined : this.cache.get(key);
     const res = await this.call(this.url(key), {
       headers: this.headers({ Accept: 'application/vnd.github.raw', ...(cached ? { 'If-None-Match': cached.httpEtag } : {}) }),
     });
@@ -130,8 +130,8 @@ export class GitHubStore implements KeyValueStore {
     return { bytes, etag: quote(gitBlobSha(bytes)) };
   }
 
-  async get(key: string): Promise<StoredItem | null> {
-    const got = await this.getBytes(key);
+  async get(key: string, opts: { fresh?: boolean } = {}): Promise<StoredItem | null> {
+    const got = await this.getBytes(key, opts);
     return got ? { value: dec.decode(got.bytes), etag: got.etag } : null;
   }
 

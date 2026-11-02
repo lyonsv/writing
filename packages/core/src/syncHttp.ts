@@ -95,8 +95,10 @@ export class HttpSyncRemote implements SyncRemote {
     return `?path=${encodeURIComponent(p)}`;
   }
 
-  async manifest(): Promise<{ seq?: number; entries: RemoteEntry[] }> {
-    const res = await this.check(await this.request('GET', '/api/sync/manifest'));
+  async manifest(opts: { fresh?: boolean } = {}): Promise<{ seq?: number; entries: RemoteEntry[] }> {
+    const res = await this.check(
+      await this.request('GET', opts.fresh ? '/api/sync/manifest?fresh=1' : '/api/sync/manifest', opts.fresh ? { headers: { 'Cache-Control': 'no-cache' } } : undefined),
+    );
     const body = (await res.json()) as { seq?: unknown; entries: RemoteEntry[] };
     return { seq: typeof body.seq === 'number' ? body.seq : undefined, entries: body.entries };
   }
