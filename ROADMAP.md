@@ -31,3 +31,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 - [ ] iOS app sharing UI + core packages
 - [ ] Native editor + focus mode
 - [ ] Sync on iOS
+
+## M6 — Polished product
+- [ ] Logo / wordmark (original design, SVG source in `assets/brand/`)
+- [ ] App icons: macOS `.icns` (electron-builder), iOS icon + splash (Expo `app.json`), favicon for web
+- [ ] Consistent visual polish pass: spacing, typography, empty states, onboarding (first-run picks documents folder)
+- [ ] README for anyone: what it is, screenshots/GIF, prerequisites, clone → install → run desktop / iOS (Expo Go) / server locally, env vars, deploy-your-own-server guide, troubleshooting
+- [ ] LICENSE (MIT) + font licence notice (IBM Plex Mono, OFL)
+- [ ] Signed/notarized macOS release build (optional; needs Apple Developer account)
+
+> Earlier milestones keep README's setup section accurate as they land; M6 is the final consolidation and polish.
