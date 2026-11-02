@@ -11,3 +11,4 @@ export * from './settings';
 export * from './lineEndings';
 export * from './tree';
 export * from './account';
+export * from './sync';
