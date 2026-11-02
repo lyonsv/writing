@@ -72,7 +72,7 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
 | `ALLOWED_GITHUB_LOGINS` | `lyonsv:2531232` (Production, Preview) |
 | `PUBLIC_URL` | `https://margin-sync.vercel.app` (Production). Preview: unset, derived from `VERCEL_URL` |
 | Deployment protection | on (Vercel Authentication for previews). The production alias is reachable directly; the app's own sign-in protects it |
-| Preview deployment | `https://margin-sync-qnofgzm9e-vincent-lyons-projects-fe5e48fc.vercel.app`: every route answers a generic `500 {"error":"server_error"}` because the GitHub variables are missing (fail closed) |
+| Preview deployment | `https://margin-sync-jjkgath9s-vincent-lyons-projects-fe5e48fc.vercel.app`: every route answers a generic `500 {"error":"server_error"}` because the GitHub variables are missing (fail closed) |
 | Production | an **unintended** first deployment (the CLI sends a project's first deploy to production); it crashes at startup and exposes nothing. Your `--prod` deploy below replaces it |
 
 **Left for you**
