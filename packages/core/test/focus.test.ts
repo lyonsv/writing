@@ -39,6 +39,18 @@ describe('sentence boundaries', () => {
     ['He works in the U.S. now. He likes it.', ['He works in the U.S. now.', 'He likes it.']],
     ['She came 1st. Then him.', ['She came 1st.', 'Then him.']],
     ['Visit example.com today. Ok.', ['Visit example.com today.', 'Ok.']],
+    // Single capitals: initials vs a sentence ending in a letter.
+    ['We chose plan B. Then it rained.', ['We chose plan B.', 'Then it rained.']],
+    ['Plan B. It worked.', ['Plan B.', 'It worked.']],
+    ['John F. Kennedy spoke. Crowds cheered.', ['John F. Kennedy spoke.', 'Crowds cheered.']],
+    ['A book by J. Smith. The end.', ['A book by J. Smith.', 'The end.']],
+    // Months end a sentence only before an opener.
+    ['He was born in Jan. He grew up fast.', ['He was born in Jan.', 'He grew up fast.']],
+    ['Due Jan. 5 at noon. Ok.', ['Due Jan. 5 at noon.', 'Ok.']],
+    ['Moved in Sept. Then left.', ['Moved in Sept.', 'Then left.']],
+    // Dotted abbreviations before names don't split.
+    ['He joined the U.S. Army in 1990. It was hard.', ['He joined the U.S. Army in 1990.', 'It was hard.']],
+    ['Talks at the U.N. Security Council. Done.', ['Talks at the U.N. Security Council.', 'Done.']],
   ])('handles abbreviations and numbers: %j', (text, expected) => {
     expect(sentences(text)).toEqual(expected);
   });

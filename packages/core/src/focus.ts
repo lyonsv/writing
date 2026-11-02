@@ -18,15 +18,44 @@ export interface TextRange {
 /** Abbreviations after which a period never ends a sentence. */
 const NEVER_ENDS = new Set([
   'mr', 'mrs', 'ms', 'mx', 'dr', 'prof', 'sr', 'jr', 'st', 'mt', 'rev', 'hon', 'gen', 'col', 'capt', 'lt', 'sgt',
-  'e.g', 'i.e', 'cf', 'vs', 'viz', 'approx', 'ca', 'jan', 'feb', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct',
-  'nov',
+  'e.g', 'i.e', 'cf', 'vs', 'viz', 'approx', 'ca',
 ]);
 
 /** Abbreviations that don't end a sentence when a number follows: "No. 5", "p. 12", "Fig. 3". */
 const BEFORE_NUMBER = new Set(['no', 'nos', 'p', 'pp', 'vol', 'vols', 'fig', 'figs', 'eq', 'ch', 'sec', 'para', 'art']);
 
-/** Abbreviations that may end a sentence: they do only if the next word is capitalised. */
-const MAYBE_ENDS = new Set(['etc', 'inc', 'ltd', 'co', 'corp', 'al', 'u.s', 'u.k', 'a.m', 'p.m', 'ph.d', 'b.c', 'a.d']);
+/**
+ * Abbreviations (and month names) that may end a sentence. They do only when
+ * the next word looks like a sentence opener: "pears, etc. Then we left",
+ * "born in Jan. He grew up" end; "the U.S. Army", "Jan. 5" don't.
+ */
+const MAYBE_ENDS = new Set([
+  'etc', 'inc', 'ltd', 'co', 'corp', 'al', 'u.s', 'u.k', 'u.n', 'e.u', 'a.m', 'p.m', 'ph.d', 'b.c', 'a.d',
+  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec',
+]);
+
+/**
+ * Capitalised words that commonly start English sentences. After an ambiguous
+ * period (a single capital like "B.", or an abbreviation like "etc."), one of
+ * these means a new sentence; any other capitalised word ("Tolkien", "Army")
+ * means the period belonged to an initial or abbreviation.
+ */
+const SENTENCE_OPENERS = new Set([
+  'A', 'An', 'The', 'This', 'That', 'These', 'Those', 'It', 'Its', 'I', 'He', 'She', 'We', 'They', 'You', 'His', 'Her',
+  'Our', 'Their', 'My', 'Your', 'There', 'Here', 'Then', 'Now', 'But', 'And', 'Or', 'So', 'Yet', 'If', 'When', 'While',
+  'After', 'Before', 'In', 'On', 'At', 'As', 'For', 'With', 'Without', 'From', 'To', 'By', 'Of', 'Some', 'Many', 'Most',
+  'All', 'No', 'Not', 'One', 'Two', 'What', 'Why', 'How', 'Who', 'Where', 'Which', 'Yes', 'Still', 'Also', 'However',
+  'Meanwhile', 'Later', 'Today', 'Tomorrow', 'Yesterday', 'Next', 'Finally', 'First', 'Instead', 'Each', 'Every',
+  'Do', 'Did', 'Is', 'Was', 'Are', 'Were', 'Can', 'Could', 'Will', 'Would', 'Should', 'Let', 'Please',
+]);
+
+/** The next word at or after `i` (skipping spaces and opening quotes/brackets). */
+function nextWord(text: string, i: number): string {
+  let j = i;
+  while (j < text.length && (isSpace(text[j]) || OPENERS.includes(text[j]!))) j++;
+  const m = /^[\p{L}\p{N}'’]+/u.exec(text.slice(j, j + 40));
+  return m ? m[0] : '';
+}
 
 const TERMINATORS = '.!?…';
 const CLOSERS = '"\'”’»)]*_`';
@@ -85,10 +114,14 @@ export function sentenceEnds(text: string): number[] {
     if (run === '.') {
       const word = wordBefore(text, runStart);
       if (NEVER_ENDS.has(word)) continue;
-      if (word.length === 1 && isUpper(text[runStart - 1])) continue; // initials: "J. R. R. Tolkien"
       // "No. 5", "p. 12", and "5. 6" (a number then a number) don't end sentences.
       if (isDigit(next) && (BEFORE_NUMBER.has(word) || /^\p{N}*$/u.test(word))) continue;
-      if ((MAYBE_ENDS.has(word) || word.includes('.')) && !isUpper(next)) continue;
+      // Ambiguous periods: a single capital ("J. R. R. Tolkien" vs "plan B. Then") or a
+      // maybe-terminal abbreviation ("U.S. Army" vs "etc. Then"). End only before an opener.
+      const initial = word.length === 1 && isUpper(text[runStart - 1]);
+      if (initial || MAYBE_ENDS.has(word) || word.includes('.')) {
+        if (!SENTENCE_OPENERS.has(nextWord(text, end))) continue;
+      }
     }
     ends.push(end);
   }
