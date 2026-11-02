@@ -246,3 +246,33 @@ test('no long tasks while typing in a 20 MB document with focus + typewriter on'
   expect((await focusState(page)).active).toContain('The quick brown fox');
   await quitAndWait(app);
 });
+
+test('20 MB: saves after typing pauses do not block the editor', async () => {
+  test.setTimeout(180_000);
+  const para = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore. ';
+  const paragraph = para.repeat(3).trim();
+  const count = Math.ceil(20_000_000 / (paragraph.length + 2));
+  const big = `# Big\n\n${Array.from({ length: count }, () => paragraph).join('\n\n')}\n`;
+  const { app, page, lib } = await open(big);
+  await page.locator('.cm-content').click();
+  await page.evaluate(() => {
+    (window as unknown as { __long: number[] }).__long = [];
+    new PerformanceObserver((list) => {
+      for (const e of list.getEntries()) (window as unknown as { __long: number[] }).__long.push(e.duration);
+    }).observe({ type: 'longtask' });
+  });
+  for (let round = 0; round < 3; round++) {
+    await page.keyboard.type(`round ${round} `, { delay: 30 });
+    await page.waitForTimeout(3500); // long enough for the (adaptive) debounced save to run
+  }
+  const longTasks = await page.evaluate(() => (window as unknown as { __long: number[] }).__long);
+  console.log(`20MB save pauses: long tasks ${JSON.stringify(longTasks.map(Math.round))}`);
+  await expect.poll(() => readFileSync(path.join(lib, 'Untitled.md'), 'utf8').includes('round 2 '), { timeout: 15_000 }).toBe(true);
+  const saved = readFileSync(path.join(lib, 'Untitled.md'), 'utf8');
+  expect(saved).toContain('round 2 ');
+  expect(saved.length).toBe(big.length + 'round 0 round 1 round 2 '.length);
+  // Budget: no single task over 100 ms, and at most one 50–100 ms task per save.
+  expect(longTasks.filter((d) => d > 100)).toEqual([]);
+  expect(longTasks.length).toBeLessThanOrEqual(3);
+  await quitAndWait(app);
+});

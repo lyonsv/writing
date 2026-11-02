@@ -85,6 +85,16 @@ function typewriterConfig(on: boolean): Extension {
   return on ? [typewriterEnabled.of(true), EditorView.editorAttributes.of({ class: 'cm-typewriter' })] : [];
 }
 
+/**
+ * Saves serialise the whole document (toString + IPC copy), so big documents
+ * save less often while typing; blur, close and quit still flush immediately.
+ */
+function adaptiveDebounce(length: number, base: number): number {
+  if (length >= 5_000_000) return Math.max(base, 2000);
+  if (length >= 1_000_000) return Math.max(base, 1000);
+  return base;
+}
+
 /** True when running inside the Electron shell (preload bridge present). */
 function isDesktopShell(): boolean {
   return typeof window !== 'undefined' && 'marginDesktop' in window;
@@ -104,7 +114,8 @@ export default function MarkdownEditor({
 }: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const pendingRef = useRef<string | null>(null);
+  /** Unsaved edits exist. The text itself is only materialised (doc.toString) when flushing. */
+  const dirtyRef = useRef(false);
   const flushRef = useRef<() => void>(() => undefined);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -124,11 +135,11 @@ export default function MarkdownEditor({
     const flush = () => {
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
-      const text = pendingRef.current;
-      if (text === null) return;
-      pendingRef.current = null;
+      const current = viewRef.current;
+      if (!dirtyRef.current || !current) return;
+      dirtyRef.current = false;
       // Called synchronously so a flush handler can await the resulting save.
-      void onChangeRef.current(text);
+      void onChangeRef.current(current.state.doc.toString());
     };
     flushRef.current = flush;
 
@@ -182,9 +193,9 @@ export default function MarkdownEditor({
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return;
             if (update.transactions.every((tr) => tr.annotation(externalLoad))) return;
-            pendingRef.current = update.state.doc.toString();
+            dirtyRef.current = true;
             if (timer !== undefined) clearTimeout(timer);
-            timer = setTimeout(flush, debounceMs);
+            timer = setTimeout(flush, adaptiveDebounce(update.state.doc.length, debounceMs));
           }),
           EditorView.domEventHandlers({ blur: () => flush() }),
         ],
@@ -253,7 +264,7 @@ export default function MarkdownEditor({
     const view = viewRef.current;
     if (!external || !view || external.token === lastExternalToken.current) return;
     lastExternalToken.current = external.token;
-    if (pendingRef.current !== null) {
+    if (dirtyRef.current) {
       // Unsaved edits win locally; push them so the save pipeline keeps both copies.
       flushRef.current();
       void onExternalResultRef.current?.(external.token, false);
