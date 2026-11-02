@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { CodeRepository } from '../src/codes';
 import { DeviceRepository, TOUCH_INTERVAL_MS } from '../src/devices';
+import { Pepper } from '../src/crypto';
 import { MemoryStore, type PutOptions } from '../src/store';
+
+const pepper = new Pepper('p'.repeat(32));
 import { newVerifier, s256 } from './helpers';
 
 /** A MemoryStore that runs `hook` just before the next matching put — to force an exact interleaving. */
@@ -25,7 +28,7 @@ describe('store interleavings', () => {
   it('a revoke landing between a touch’s read and write wins (no resurrection)', async () => {
     let t = 1_000_000;
     const store = new InterleavingStore();
-    const repo = new DeviceRepository(store, () => t);
+    const repo = new DeviceRepository(store, pepper, () => t);
     const { token, record } = await repo.create(who, 'Mac', 'native');
     t += TOUCH_INTERVAL_MS + 1;
     store.hook = {
@@ -42,7 +45,7 @@ describe('store interleavings', () => {
   it('a touch landing between a revoke’s read and write does not block the revoke', async () => {
     let t = 1_000_000;
     const store = new InterleavingStore();
-    const repo = new DeviceRepository(store, () => t);
+    const repo = new DeviceRepository(store, pepper, () => t);
     const { token, record } = await repo.create(who, 'Mac', 'native');
     t += TOUCH_INTERVAL_MS + 1;
     store.hook = {
@@ -57,7 +60,7 @@ describe('store interleavings', () => {
 
   it('a second redemption between the first’s read and write loses', async () => {
     const store = new InterleavingStore();
-    const codes = new CodeRepository(store);
+    const codes = new CodeRepository(store, pepper);
     const v = newVerifier();
     const code = await codes.issue(who, s256(v), 'http://127.0.0.1:5000/callback');
     let inner: unknown;

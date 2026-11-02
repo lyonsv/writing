@@ -34,7 +34,7 @@ Every variable is listed in `.env.example`.
 | `GITHUB_CLIENT_ID` | yes | From the OAuth App for this environment. |
 | `GITHUB_CLIENT_SECRET` | yes | Secret. Vercel env vars or `apps/server/.env.local` only. |
 | `ALLOWED_GITHUB_LOGINS` | yes | `lyonsv:1234567`, a comma-separated list of `login:id` pairs. Both must match. |
-| `AUTH_SECRET` | yes | ≥ 32 random characters: `openssl rand -base64 48`. Seals the 10-minute sign-in cookie. Rotating it only cancels sign-ins in progress. |
+| `AUTH_SECRET` | yes | ≥ 32 random characters: `openssl rand -base64 48`. Seals the sign-in cookies and keys the stored token/code hashes (HMAC). **Rotating it signs out every device and web session** (ADR 0012). |
 | `BLOB_STORE_ID` | prod | Injected by Vercel when a Blob store is connected (with `VERCEL_OIDC_TOKEN`). |
 | `BLOB_READ_WRITE_TOKEN` | optional | Only to use a real Blob store from a local machine. |
 | `MARGIN_STORE` | local | `memory` for local dev (refused on Vercel). |

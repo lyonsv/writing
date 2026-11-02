@@ -1,9 +1,12 @@
 import { NATIVE_CUSTOM_SCHEME_REDIRECT } from '@margin/core';
+import { createHmac } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { PUBLIC_ROUTES, createApp } from '../src/app';
 import { ConfigError } from '../src/config';
 import { CODE_TTL_MS } from '../src/codes';
+import { sha256Hex } from '../src/crypto';
 import { TOKEN_TTL_MS } from '../src/devices';
 import { CUSTOM_SCHEME_REDIRECT, safeReturnPath } from '../src/redirects';
 import { MemoryStore } from '../src/store';
@@ -555,6 +558,42 @@ describe('the auth gate', () => {
     expect((await h.req('/api/me', bearer(b.token))).status).toBe(401);
     const list = (await (await h.req('/api/devices', bearer(a.token))).json()) as { devices: Array<{ id: string }> };
     expect(list.devices.map((d) => d.id)).toEqual([a.deviceId]);
+  });
+});
+
+describe('stored hashes are keyed by AUTH_SECRET (pepper)', () => {
+  it('a device record minted with only Blob write access is useless', async () => {
+    const h = setup();
+    const id = 'A'.repeat(22);
+    const secret = 'S'.repeat(43);
+    const now = Date.now();
+    // An attacker with a leaked Blob token writes a record for a token they chose.
+    for (const tokenHash of [sha256Hex(secret), createHmac('sha256', 'guess').update(secret).digest('hex')]) {
+      await h.store.put(
+        `auth/devices/${id}.json`,
+        JSON.stringify({ v: 1, id, tokenHash, name: 'evil', kind: 'native', githubId: OWNER.id, login: OWNER.login, createdAt: now, lastUsedAt: now, expiresAt: now + DAY }),
+      );
+      expect((await h.req('/api/me', bearer(`mgn_${id}.${secret}`))).status).toBe(401);
+    }
+  });
+
+  it('a one-time code record minted with only Blob write access is useless', async () => {
+    const h = setup();
+    const code = 'C'.repeat(43);
+    const verifier = newVerifier();
+    await h.store.put(
+      `auth/codes/${sha256Hex(code)}.json`,
+      JSON.stringify({ v: 1, githubId: OWNER.id, login: OWNER.login, challenge: s256(verifier), redirectUri: LOOPBACK, expiresAt: Date.now() + 60_000 }),
+    );
+    expect((await exchange(h, { code, code_verifier: verifier, redirect_uri: LOOPBACK })).status).toBe(400);
+  });
+
+  it('stores an HMAC, not a plain SHA-256, of the token secret', async () => {
+    const h = setup();
+    const { token, deviceId } = await signIn(h);
+    const record = JSON.parse((await h.store.get(`auth/devices/${deviceId}.json`))!.value) as { tokenHash: string };
+    expect(record.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(record.tokenHash).not.toBe(sha256Hex(token.split('.')[1]!));
   });
 });
 

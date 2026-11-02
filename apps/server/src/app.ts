@@ -7,7 +7,7 @@ import { HTTPException } from 'hono/http-exception';
 import { CodeRepository } from './codes';
 import { NonceRepository } from './nonces';
 import { ConfigError, isAllowed, type Config } from './config';
-import { PKCE_CHALLENGE, PKCE_VERIFIER, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto';
+import { PKCE_CHALLENGE, PKCE_VERIFIER, Pepper, Sealer, pkceChallenge, randomToken, safeEqual } from './crypto';
 import { DeviceRepository, TOKEN_TTL_MS, cleanDeviceName, toDeviceInfo, type DeviceRecord, type Identity } from './devices';
 import { GitHubError, authorizeUrl, fetchGitHubIdentity, type Fetch } from './github';
 import { RateLimiter } from './rateLimit';
@@ -96,16 +96,21 @@ export function createApp(deps: AppDeps): Hono<Env> {
   const now = deps.now ?? Date.now;
   const fetchImpl: Fetch = deps.fetch ?? ((input, init) => fetch(input, init));
   const log: Logger = deps.log ?? ((event, fields) => console.log(JSON.stringify({ event, ...fields })));
-  const devices = new DeviceRepository(deps.store, now);
-  const codes = new CodeRepository(deps.store, now);
-  const states = new NonceRepository(deps.store, 'auth/states/', undefined, now);
 
   let config: Config | undefined;
   let sealer: Sealer | undefined;
+  // Built with the config: their hashes are keyed by AUTH_SECRET.
+  let devices!: DeviceRepository;
+  let codes!: CodeRepository;
+  let states!: NonceRepository;
   const getConfig = (): Config => {
     if (!config) {
       config = typeof deps.config === 'function' ? deps.config() : deps.config;
       sealer = new Sealer(config.authSecret);
+      const pepper = new Pepper(config.authSecret);
+      devices = new DeviceRepository(deps.store, pepper, now);
+      codes = new CodeRepository(deps.store, pepper, now);
+      states = new NonceRepository(deps.store, 'auth/states/', pepper.hash, now);
     }
     return config;
   };

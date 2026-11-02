@@ -1,4 +1,3 @@
-import { sha256Hex } from './crypto';
 import { PreconditionFailedError, type KeyValueStore } from './store';
 
 /**
@@ -13,7 +12,8 @@ export class NonceRepository {
   constructor(
     private readonly store: KeyValueStore,
     private readonly prefix: string,
-    private readonly hash: (value: string) => string = sha256Hex,
+    /** Keyed hash (HMAC under AUTH_SECRET) for nonce storage keys. */
+    private readonly hash: (value: string) => string,
     private readonly now: () => number = Date.now,
   ) {}
 

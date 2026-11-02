@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /** `bytes` of CSPRNG output, base64url (no padding). 32 bytes → 43 chars. */
 export function randomToken(bytes = 32): string {
@@ -39,6 +39,31 @@ export function pkceChallenge(verifier: string): string {
 export const PKCE_VERIFIER = /^[A-Za-z0-9\-._~]{43,128}$/;
 /** An S256 challenge is exactly 43 base64url chars. */
 export const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * Keyed hash for everything we store about secrets (device-token secrets,
+ * one-time codes, OAuth state nonces): HMAC-SHA256 under a key derived from
+ * AUTH_SECRET (HKDF, its own label, so it's independent of the cookie key).
+ * Someone who can write the Blob store but doesn't know AUTH_SECRET can't mint
+ * a record that a chosen token or code would match (ADR 0012 amendments).
+ */
+export class Pepper {
+  private readonly key: Buffer;
+
+  constructor(secret: string) {
+    this.key = Buffer.from(hkdfSync('sha256', secret, 'margin', 'token-hash v1', 32));
+  }
+
+  /** Lowercase hex HMAC-SHA256 of `value`. */
+  hash = (value: string): string => createHmac('sha256', this.key).update(value, 'utf8').digest('hex');
+
+  /** Constant-time check of a stored hex MAC against `value`. */
+  matches = (storedHex: string, value: string): boolean => {
+    const stored = Buffer.from(storedHex, 'hex');
+    const actual = Buffer.from(this.hash(value), 'hex');
+    return stored.length === actual.length && timingSafeEqual(stored, actual);
+  };
+}
 
 /**
  * Authenticated encryption (AES-256-GCM) for the short-lived OAuth state

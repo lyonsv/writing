@@ -1,4 +1,4 @@
-import { pkceChallenge, randomToken, safeEqual, sha256Hex } from './crypto';
+import { pkceChallenge, randomToken, safeEqual, type Pepper } from './crypto';
 import { PreconditionFailedError, type KeyValueStore } from './store';
 import type { Identity } from './devices';
 
@@ -35,6 +35,8 @@ export type RedeemResult = { ok: true; identity: Identity; deviceName?: string }
 export class CodeRepository {
   constructor(
     private readonly store: KeyValueStore,
+    /** Keyed hash (HMAC under AUTH_SECRET) for code storage keys. */
+    private readonly pepper: Pick<Pepper, 'hash'>,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -49,13 +51,13 @@ export class CodeRepository {
       ...(deviceName ? { deviceName } : {}),
       expiresAt: this.now() + CODE_TTL_MS,
     };
-    await this.store.put(`${PREFIX}${sha256Hex(code)}.json`, JSON.stringify(record), { create: true });
+    await this.store.put(`${PREFIX}${this.pepper.hash(code)}.json`, JSON.stringify(record), { create: true });
     return code;
   }
 
   async redeem(code: string, verifier: string, redirectUri: string): Promise<RedeemResult> {
     if (!/^[A-Za-z0-9_-]{43}$/.test(code)) return { ok: false };
-    const k = `${PREFIX}${sha256Hex(code)}.json`;
+    const k = `${PREFIX}${this.pepper.hash(code)}.json`;
     const item = await this.store.get(k);
     if (!item) return { ok: false };
     let record: CodeRecord;

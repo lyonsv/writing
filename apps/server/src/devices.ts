@@ -1,6 +1,6 @@
 import type { DeviceInfo } from '@margin/core';
 
-import { hashMatches, randomToken, sha256Hex } from './crypto';
+import { randomToken, type Pepper } from './crypto';
 import { PreconditionFailedError, type KeyValueStore } from './store';
 
 /**
@@ -8,7 +8,7 @@ import { PreconditionFailedError, type KeyValueStore } from './store';
  *
  * A token is `mgn_<deviceId>.<secret>`: the id selects the record, the 256-bit
  * secret is verified against the stored SHA-256 with a constant-time compare.
- * Only the hash is stored. Records live at `auth/devices/<id>.json`.
+ * Only an HMAC of the secret (keyed by AUTH_SECRET) is stored. Records live at `auth/devices/<id>.json`.
  *
  * Expiry is rolling: a successful use pushes `expiresAt` to now + TTL, at most
  * once per TOUCH_INTERVAL so a busy client doesn't write on every request.
@@ -85,6 +85,8 @@ export function toDeviceInfo(r: DeviceRecord, currentId?: string): DeviceInfo {
 export class DeviceRepository {
   constructor(
     private readonly store: KeyValueStore,
+    /** Keyed hash (HMAC under AUTH_SECRET) for token secrets. */
+    private readonly pepper: Pick<Pepper, 'hash' | 'matches'>,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -96,7 +98,7 @@ export class DeviceRepository {
     const record: DeviceRecord = {
       v: 1,
       id,
-      tokenHash: sha256Hex(secret),
+      tokenHash: this.pepper.hash(secret),
       name: cleanDeviceName(name),
       kind,
       githubId: identity.githubId,
@@ -125,7 +127,7 @@ export class DeviceRepository {
     const item = await this.store.get(key(m[1]!));
     const record = item ? parseRecord(item.value) : null;
     // Always run the comparison, so unknown ids and wrong secrets take similar time.
-    const ok = hashMatches(record?.tokenHash ?? '0'.repeat(64), m[2]!);
+    const ok = this.pepper.matches(record?.tokenHash ?? '0'.repeat(64), m[2]!);
     if (!item || !record || !ok || record.id !== m[1]) return null;
     const t = this.now();
     if (record.revokedAt !== undefined || record.expiresAt <= t) return null;

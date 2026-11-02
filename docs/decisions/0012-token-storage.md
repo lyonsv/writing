@@ -23,7 +23,7 @@ Device tokens must be revocable, expire, and survive across serverless instances
   {
     "v": 1,
     "id": "...",
-    "tokenHash": "<sha256 hex of the secret>",
+    "tokenHash": "<HMAC-SHA256 hex of the secret, keyed by AUTH_SECRET>",
     "name": "...",
     "kind": "native|web",
     "githubId": 0,
@@ -53,3 +53,8 @@ Device tokens must be revocable, expire, and survive across serverless instances
 - Listing devices is `list` + N reads. That's fine for a handful of devices, but would need an index for hundreds.
 - Blob is the source of truth for revocation, and `useCache: false` means a revoked token fails on its next request on any instance. There is no in-process token cache to invalidate.
 - Signing out offline deletes the local token, but the server record stays valid until it is revoked from another device or expires.
+
+## Amendments (2026-11-02, after the M4 security review of 34c08ae)
+- **Stored hashes are peppered.** `tokenHash`, the code keys (`auth/codes/<…>.json`) and the OAuth state nonce keys (`auth/states/<…>.json`) are now **HMAC-SHA256** under a key derived from `AUTH_SECRET` (HKDF, label `token-hash v1`, separate from the cookie key), not plain SHA-256. Someone holding only a leaked Blob read-write token could otherwise write `auth/devices/<id>.json` with the SHA-256 of a secret they chose and mint a working device token, or plant a one-time code. Without `AUTH_SECRET` they can't compute a matching MAC. Tests mint such records directly in the store and expect 401/400.
+- **Migration:** none needed; nothing was deployed with the unpeppered scheme. Had there been records, they'd simply stop matching (users sign in again).
+- **Rotating `AUTH_SECRET`** now signs out **every** device and web session, and cancels sign-ins and codes in flight, because no stored MAC matches under the new key. That is the intended "log everyone out" lever. There is no dual-key grace period; add `AUTH_SECRET_PREVIOUS` (try both keys, rewrite on use) if rotation ever needs to be seamless. Rotate when the secret may have leaked, together with the Blob token if that leaked too.
