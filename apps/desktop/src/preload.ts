@@ -8,6 +8,7 @@ import {
   type ExternalChange,
   type FlushResult,
   type Settings,
+  type SyncStatus,
 } from '@margin/core';
 import { contextBridge, ipcRenderer } from 'electron';
 
@@ -107,6 +108,17 @@ const bridge: DesktopBridge = {
       ipcRenderer.on(IPC_CHANNELS.accountChanged, wrapped);
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.accountChanged, wrapped);
+      };
+    },
+  },
+  sync: {
+    status: () => invoke(IPC_CHANNELS.syncStatus),
+    syncNow: () => invoke(IPC_CHANNELS.syncNow),
+    onChange: (listener) => {
+      const wrapped = (_event: unknown, s: SyncStatus) => listener(s);
+      ipcRenderer.on(IPC_CHANNELS.syncChanged, wrapped);
+      return () => {
+        ipcRenderer.removeListener(IPC_CHANNELS.syncChanged, wrapped);
       };
     },
   },

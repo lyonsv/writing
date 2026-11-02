@@ -32,6 +32,7 @@ import {
 import { watch as watchTree, type FSWatcher } from 'chokidar';
 
 import { AccountError, AccountManager } from './account';
+import { SyncService } from './sync';
 import { FileSystemLibrary } from './library';
 import { SettingsFile } from './settings';
 import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
@@ -46,6 +47,7 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_TEST_NO_HARDLINKS  simulate a filesystem without hard links (tests)
  *   MARGIN_TEST_LIST_LIMIT    cap the library listing at this many entries (tests)
  *   MARGIN_SERVER_URL      Margin server origin for sign-in (else settings.serverUrl, else http://127.0.0.1:3000)
+ *   MARGIN_SYNC_INTERVAL_MS  sync timer (default 30000; tests)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
 /**
@@ -66,6 +68,35 @@ let library!: FileSystemLibrary;
 let treeWatcher: FSWatcher | undefined;
 let settings: SettingsFile;
 let account: AccountManager;
+let sync: SyncService;
+
+/**
+ * Before each sync run: ask every window to push unsaved editor text through the
+ * save pipeline (ADR 0006), so uploads include what was typed. Unlike quit, a
+ * slow renderer is never destroyed: we just skip this run and try again later.
+ */
+async function flushForSync(): Promise<boolean> {
+  const outcomes = await Promise.all(
+    BrowserWindow.getAllWindows().map((w) => flushWindow(w, { timeoutMs: 3_000, destroyOnTimeout: false })),
+  );
+  return outcomes.every((o) => o.clean && !('unresponsive' in o));
+}
+
+function createSync(): SyncService {
+  return new SyncService({
+    library: () => library,
+    account,
+    stateDir: path.join(app.getPath('userData'), 'sync'),
+    trash: (abs) => shell.trashItem(abs),
+    beforeSync: flushForSync,
+    intervalMs: Number(process.env.MARGIN_SYNC_INTERVAL_MS) || 30_000,
+    onStatus: (status) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.syncChanged, status);
+      }
+    },
+  });
+}
 
 export const DEFAULT_SERVER_URL = 'http://127.0.0.1:3000'; // matches pnpm dev:server and the dev OAuth callback
 const serverUrl = () => process.env.MARGIN_SERVER_URL || settings.get().serverUrl || DEFAULT_SERVER_URL;
@@ -83,6 +114,7 @@ function createAccount(): AccountManager {
     deviceName: () => `${os.hostname().replace(/\.local$/, '')} (Margin for Mac)`,
     onChange: (status) => {
       updateAccountMenu();
+      sync?.accountChanged();
       for (const win of BrowserWindow.getAllWindows()) {
         if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.accountChanged, status);
       }
@@ -97,6 +129,8 @@ function updateAccountMenu(): void {
   const signOut = menu?.getMenuItemById('sign-out');
   if (signIn) signIn.enabled = state !== 'signed-in';
   if (signOut) signOut.enabled = state === 'signed-in';
+  const syncNow = menu?.getMenuItemById('sync-now');
+  if (syncNow) syncNow.enabled = state === 'signed-in';
 }
 
 /** Account errors carry user-facing text; anything else gets a generic message (no internals over IPC). */
@@ -159,6 +193,7 @@ async function startTreeWatcher(root: string): Promise<void> {
     ignored: (p: string) => p !== root && path.basename(p).startsWith('.'),
   });
   watcher.on('all', () => {
+    sync?.nudge(); // a local change: sync soon (debounced)
     clearTimeout(treeChangeTimer);
     treeChangeTimer = setTimeout(() => {
       for (const win of BrowserWindow.getAllWindows()) {
@@ -220,7 +255,7 @@ async function chooseLibraryFolder(): Promise<void> {
 
   switchingLibrary = true;
   try {
-    const outcomes = await Promise.all(BrowserWindow.getAllWindows().map(flushWindow));
+    const outcomes = await Promise.all(BrowserWindow.getAllWindows().map((w) => flushWindow(w)));
     const unsaved = outcomes.filter((o) => !o.clean);
     if (unsaved.length > 0 && !(await confirmDiscard(unsaved, 'Switch', parent))) return;
     await library.idle();
@@ -229,6 +264,7 @@ async function chooseLibraryFolder(): Promise<void> {
     await library.init();
     await startTreeWatcher(library.root);
     await settings.update({ libraryDir: library.root, lastDocument: '' });
+    void sync.syncNow(); // a different folder has its own base
     for (const win of BrowserWindow.getAllWindows()) if (!win.isDestroyed()) win.webContents.reload();
   } finally {
     switchingLibrary = false;
@@ -305,18 +341,20 @@ function parseFlushResult(raw: unknown): FlushResult {
  * A renderer that doesn't answer in time is destroyed (not closed: closing
  * waits for its unload handlers, which a hung page never runs).
  */
-function flushWindow(win: BrowserWindow): Promise<FlushOutcome> {
+function flushWindow(win: BrowserWindow, opts: { timeoutMs?: number; destroyOnTimeout?: boolean } = {}): Promise<FlushOutcome> {
   if (win.isDestroyed() || win.webContents.isCrashed()) {
     return library.idle().then(() => ({ clean: true, unresponsive: true }) as const);
   }
   const id = ++flushSeq;
+  const timeoutMs = opts.timeoutMs ?? FLUSH_TIMEOUT_MS;
   return new Promise<FlushOutcome>((resolve) => {
     const timer = setTimeout(() => {
       flushWaiters.delete(id);
-      console.warn(`Margin: renderer did not confirm flush within ${FLUSH_TIMEOUT_MS}ms; destroying its window`);
+      if (opts.destroyOnTimeout === false) return resolve({ clean: true, unresponsive: true });
+      console.warn(`Margin: renderer did not confirm flush within ${timeoutMs}ms; destroying its window`);
       if (!win.isDestroyed()) win.destroy();
       resolve({ clean: true, unresponsive: true });
-    }, FLUSH_TIMEOUT_MS);
+    }, timeoutMs);
     flushWaiters.set(id, (result) => {
       clearTimeout(timer);
       flushWaiters.delete(id);
@@ -386,7 +424,7 @@ app.on('before-quit', (event) => {
   void (async () => {
     let proceed = true;
     try {
-      const outcomes = await Promise.all(BrowserWindow.getAllWindows().map(flushWindow));
+      const outcomes = await Promise.all(BrowserWindow.getAllWindows().map((w) => flushWindow(w)));
       await Promise.all([library?.idle(), settings?.idle(), treeWatcher?.close()]);
       const unsaved = outcomes.filter((o) => !o.clean);
       if (unsaved.length > 0) proceed = await confirmDiscard(unsaved, 'Quit');
@@ -398,6 +436,7 @@ app.on('before-quit', (event) => {
       return;
     }
     quitReady = true;
+    sync?.stop();
     library?.dispose();
     app.quit();
   })();
@@ -450,6 +489,8 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.accountSignOut, () => accountCall(() => account.signOut()));
   handle(IPC_CHANNELS.accountDevices, () => accountCall(() => account.listDevices()));
   handle(IPC_CHANNELS.accountRevoke, (id: string) => accountCall(() => account.revokeDevice(id)));
+  handle(IPC_CHANNELS.syncStatus, async () => sync.status());
+  handle(IPC_CHANNELS.syncNow, () => sync.syncNow());
 
   ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown, result: unknown) => {
     try {
@@ -511,6 +552,7 @@ function buildMenu(): void {
         { id: 'sign-in', label: 'Sign In…', click: () => menuSignIn() },
         { id: 'sign-out', label: 'Sign Out', click: () => void account.signOut().catch(() => undefined) },
         { id: 'account', label: 'Account and Devices…', click: () => sendCommand('account') },
+        { id: 'sync-now', label: 'Sync Now', accelerator: 'CommandOrControl+Alt+S', click: () => void sync.syncNow() },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -697,9 +739,11 @@ app.whenReady().then(async () => {
   // No camera, mic, notifications, etc.
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   if (!DEV_SERVER_URL) handleAppScheme(webRoot());
+  sync = createSync();
   registerIpc();
   buildMenu();
   createWindow();
+  sync.start(); // no-op while signed out
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

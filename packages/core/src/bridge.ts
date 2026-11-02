@@ -1,4 +1,5 @@
 import type { AccountBackend } from './account';
+import type { SyncStatus } from './sync';
 import type { LibraryEntry, LibraryListing } from './document';
 import type { Settings } from './settings';
 
@@ -40,6 +41,9 @@ export const IPC_CHANNELS = {
   accountDevices: 'margin:account:devices',
   accountRevoke: 'margin:account:revoke',
   accountChanged: 'margin:account:changed',
+  syncStatus: 'margin:sync:status',
+  syncNow: 'margin:sync:now',
+  syncChanged: 'margin:sync:changed',
 } as const;
 
 /** Window event the editor listens for: flush pending text synchronously via onChange. */
@@ -145,6 +149,12 @@ export interface DesktopBridge {
    * every authenticated request; the renderer only ever sees `AccountStatus`.
    */
   account: Omit<AccountBackend, 'available'>;
+  /** Library sync status (ADR 0013); runs in main. */
+  sync: {
+    status(): Promise<SyncStatus>;
+    syncNow(): Promise<SyncStatus>;
+    onChange(listener: (status: SyncStatus) => void): () => void;
+  };
   onCommand(listener: (command: AppCommand) => void): () => void;
   /**
    * Registers a handler the main process runs before a window closes or the app

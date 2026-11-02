@@ -15,6 +15,7 @@ import { Sidebar, type SidebarColors } from '../components/library/Sidebar';
 import { getAccountBackend } from '../src/account/account';
 import { getDesktopBridge, getLibraryBackend } from '../src/storage/documentStore';
 import { useSettings } from '../src/useSettings';
+import { syncLabel, useSyncStatus } from '../src/useSyncStatus';
 import { useWorkspace } from '../src/useWorkspace';
 
 const LIGHT: SidebarColors = { background: '#f3f3f1', text: '#1f1f1f', muted: '#8a8a86', active: '#e3e3df', danger: '#c2410c' };
@@ -27,6 +28,9 @@ export default function EditorScreen() {
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [renameRequest, setRenameRequest] = useState<string | null>(null);
   const [accountVisible, setAccountVisible] = useState(false);
+  const syncStatus = useSyncStatus();
+  // Subtle, bottom-left; never in focus mode, nothing at all while signed out.
+  const syncText = settings.focusMode ? null : syncLabel(syncStatus);
   const background = dark ? '#1b1b1c' : '#fbfbfa';
   const colors = dark ? DARK : LIGHT;
   const desktop = getDesktopBridge() !== undefined;
@@ -131,6 +135,15 @@ export default function EditorScreen() {
         ) : ws.loadError ? (
           <Text style={[styles.message, { color: colors.text }]}>{ws.loadError}</Text>
         ) : null}
+        {syncText ? (
+          <Text
+            testID="sync-status"
+            style={[styles.sync, { color: syncStatus?.state === 'error' ? colors.danger : colors.muted }]}
+            numberOfLines={1}
+          >
+            {syncText}
+          </Text>
+        ) : null}
         {status ? (
           <Text
             testID="save-status"
@@ -171,4 +184,5 @@ const styles = StyleSheet.create({
   editorPane: { flex: 1 },
   message: { margin: 24, fontFamily: 'monospace' },
   status: { position: 'absolute', right: 16, bottom: 12, fontSize: 12, opacity: 0.9 },
+  sync: { position: 'absolute', left: 16, bottom: 12, fontSize: 11, opacity: 0.7, maxWidth: '45%' },
 });
