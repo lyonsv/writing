@@ -1,18 +1,20 @@
 import { DEFAULT_SETTINGS, type Settings } from '@margin/core';
 import { useCallback, useEffect, useState } from 'react';
 
-import type { EditorCommand } from '../components/editor/MarkdownEditor';
 import { getSettingsStore } from './storage/documentStore';
 
 /** Current settings plus an updater; stays in sync with changes from the desktop menu. */
 export function useSettings() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     const store = getSettingsStore();
     let cancelled = false;
     void store.load().then((s) => {
-      if (!cancelled) setSettings(s);
+      if (cancelled) return;
+      setSettings(s);
+      setLoaded(true);
     });
     const off = store.subscribe((s) => {
       if (!cancelled) setSettings(s);
@@ -24,29 +26,19 @@ export function useSettings() {
   }, []);
 
   const update = useCallback(async (patch: Partial<Settings>) => {
-    const next = await getSettingsStore().update(patch);
-    setSettings(next);
+    setSettings(await getSettingsStore().update(patch));
   }, []);
 
-  /** Applies an editor keyboard command (used where there's no app menu). */
-  const runCommand = useCallback(
-    async (command: EditorCommand) => {
-      const s = await getSettingsStore().load();
-      switch (command) {
-        case 'toggle-focus':
-          return update({ focusMode: !s.focusMode });
-        case 'toggle-typewriter':
-          return update({ typewriter: !s.typewriter });
-        case 'scope-sentence':
-          return update({ focusScope: 'sentence' });
-        case 'scope-paragraph':
-          return update({ focusScope: 'paragraph' });
-        case 'scope-off':
-          return update({ focusScope: 'off' });
-      }
-    },
-    [update],
-  );
+  /** Toggles that keep the "sidebar never in focus mode" rule. */
+  const toggleFocus = useCallback(async () => {
+    const s = await getSettingsStore().load();
+    await update({ focusMode: !s.focusMode });
+  }, [update]);
 
-  return { settings, update, runCommand };
+  const toggleSidebar = useCallback(async () => {
+    const s = await getSettingsStore().load();
+    await update(s.focusMode ? { focusMode: false, sidebar: true } : { sidebar: !s.sidebar });
+  }, [update]);
+
+  return { settings, loaded, update, toggleFocus, toggleSidebar };
 }

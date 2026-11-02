@@ -1,6 +1,7 @@
 import { DESKTOP_BRIDGE_KEY, type DesktopBridge, type DocumentStore, type SettingsStore } from '@margin/core';
 
 import { desktopBackend, storeBackend, type DocumentBackend } from './documentBackend';
+import { desktopLibraryBackend, storeLibraryBackend, type LibraryBackend } from './libraryBackend';
 import { createLocalStorageStore } from './localStorageStore';
 import { desktopSettingsStore, localStorageSettingsStore } from './settingsStore';
 
@@ -43,4 +44,14 @@ export function getSettingsStore(): SettingsStore {
     settings = bridge ? desktopSettingsStore(bridge) : localStorageSettingsStore();
   }
   return settings;
+}
+
+let library: LibraryBackend | undefined;
+
+export function getLibraryBackend(): LibraryBackend {
+  if (!library) {
+    const bridge = getDesktopBridge();
+    library = bridge ? desktopLibraryBackend(bridge) : storeLibraryBackend(getDocumentStore());
+  }
+  return library;
 }

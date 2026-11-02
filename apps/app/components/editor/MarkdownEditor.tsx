@@ -4,7 +4,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Annotation, Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, drawSelection, keymap, placeholder } from '@codemirror/view';
-import { FLUSH_EVENT, type FocusScope } from '@margin/core';
+import { FLUSH_EVENT, FOCUS_EDITOR_EVENT, type FocusScope } from '@margin/core';
 import type { DOMProps } from 'expo/dom';
 import { useEffect, useRef, type CSSProperties } from 'react';
 
@@ -19,7 +19,15 @@ export interface ExternalContent {
 }
 
 /** Commands the editor can request (keyboard shortcuts when there is no app menu). */
-export type EditorCommand = 'toggle-focus' | 'toggle-typewriter' | 'scope-sentence' | 'scope-paragraph' | 'scope-off';
+export type EditorCommand =
+  | 'toggle-focus'
+  | 'toggle-typewriter'
+  | 'scope-sentence'
+  | 'scope-paragraph'
+  | 'scope-off'
+  | 'toggle-sidebar'
+  | 'quick-open'
+  | 'new-document';
 
 export interface MarkdownEditorProps {
   /** Text shown at mount. Later changes are ignored; remount (via `key`) to load another document. */
@@ -157,6 +165,9 @@ export default function MarkdownEditor({
                     ['Mod-Alt-1', 'scope-sentence'],
                     ['Mod-Alt-2', 'scope-paragraph'],
                     ['Mod-Alt-0', 'scope-off'],
+                    ['Mod-\\', 'toggle-sidebar'],
+                    ['Mod-p', 'quick-open'],
+                    ['Mod-n', 'new-document'],
                   ] as const
                 ).map(([key, command]) => ({
                   key,
@@ -185,12 +196,15 @@ export default function MarkdownEditor({
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') flush();
     };
+    const takeFocus = () => view.focus();
+    window.addEventListener(FOCUS_EDITOR_EVENT, takeFocus);
     window.addEventListener(FLUSH_EVENT, flush);
     window.addEventListener('blur', flush);
     window.addEventListener('pagehide', flush);
     window.addEventListener('beforeunload', flush);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
+      window.removeEventListener(FOCUS_EDITOR_EVENT, takeFocus);
       window.removeEventListener(FLUSH_EVENT, flush);
       window.removeEventListener('blur', flush);
       window.removeEventListener('pagehide', flush);

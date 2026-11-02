@@ -7,6 +7,7 @@ import {
 } from '@margin/core';
 
 import { storeBackend, type DocumentBackend } from './documentBackend';
+import { storeLibraryBackend, type LibraryBackend } from './libraryBackend';
 
 /** No desktop bridge on iOS. */
 export function getDesktopBridge(): DesktopBridge | undefined {
@@ -36,4 +37,12 @@ let settings: SettingsStore | undefined;
 export function getSettingsStore(): SettingsStore {
   settings ??= new MemorySettingsStore();
   return settings;
+}
+
+let library: LibraryBackend | undefined;
+
+/** Stub until M6 (expo-file-system). */
+export function getLibraryBackend(): LibraryBackend {
+  library ??= storeLibraryBackend(getDocumentStore());
+  return library;
 }
