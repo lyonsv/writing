@@ -1,7 +1,7 @@
 import { allDocuments, buildTree, canMoveInto, movedPath, type TreeNode } from '@margin/core';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useColorScheme } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useColorScheme } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { QuickOpen } from '../library/QuickOpen';
@@ -16,6 +16,8 @@ import { usePhone } from './context';
  * actions, "Move to…"), quick open as search, pull to sync. Opening a document
  * pushes the editor. On launch the last document opens straight away. ADR 0016.
  */
+let resumedThisLaunch = false;
+
 export function LibraryScreen() {
   const { nav, services } = usePhone();
   const insets = useSafeAreaInsets();
@@ -34,13 +36,24 @@ export function LibraryScreen() {
     if (nav.searchRequest) setSearching(true);
   }, [nav.searchRequest]);
 
-  // Resume writing: once the first document is open at launch, show it.
-  const resumed = useRef(false);
+  // Resume writing: once per app launch, when the first document is open, show it.
+  // (Module-level: on the web this screen remounts every time you come back to it.)
   useEffect(() => {
-    if (resumed.current || !ws.session) return;
-    resumed.current = true;
+    if (resumedThisLaunch || !ws.session) return;
+    resumedThisLaunch = true;
     nav.openEditor();
   }, [ws.session, nav]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await ws.refresh();
+      await services.sync?.syncNow();
+      await ws.refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const open = async (path: string) => {
     setError(null);
@@ -69,6 +82,12 @@ export function LibraryScreen() {
         <Text style={[styles.title, { color: colors.text }]} accessibilityRole="header">
           Library
         </Text>
+        {Platform.OS === 'web' && services.sync ? (
+          // react-native-web has no pull-to-refresh (RefreshControl), so the web app gets a button.
+          <Pressable onPress={() => void refresh()} hitSlop={10} accessibilityRole="button" accessibilityLabel="Sync now">
+            <Text style={[styles.headerButton, { color: colors.muted }]}>{refreshing ? 'Syncing…' : 'Sync'}</Text>
+          </Pressable>
+        ) : null}
         <Pressable onPress={() => setSearching(true)} hitSlop={10} accessibilityRole="button" accessibilityLabel="Search documents">
           <Text style={[styles.headerButton, { color: colors.muted }]}>Search</Text>
         </Pressable>
@@ -95,14 +114,7 @@ export function LibraryScreen() {
         onTrash={ws.trash}
         onMove={(path) => setMoving(path)}
         refreshing={refreshing}
-        onRefresh={() => {
-          setRefreshing(true);
-          void ws
-            .refresh()
-            .then(() => services.sync?.syncNow())
-            .then(() => ws.refresh())
-            .finally(() => setRefreshing(false));
-        }}
+        onRefresh={() => void refresh()}
       />
 
       {error ? <Text style={[styles.footer, { color: colors.danger }]}>{error}</Text> : null}

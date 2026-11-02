@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { createApp } from '../src/createApp';
+import { createApp, type AppDeps } from '../src/createApp';
 import type { Config } from '../src/config';
 import { listen } from '../src/local';
 import { MemoryStore } from '../src/store';
@@ -84,10 +84,15 @@ export async function startMockGitHub(initial: GitHubUser) {
 }
 
 /** A Margin server (in-memory store) talking to the mock GitHub. */
-export async function startTestServer(github: { url: string }, allowed: GitHubUser, extra: Partial<Config> = {}) {
+export async function startTestServer(
+  github: { url: string },
+  allowed: GitHubUser,
+  extra: Partial<Config> = {},
+  options: { web?: AppDeps['web'] } = {},
+) {
   let config: Config | undefined;
   const store = new MemoryStore();
-  const app = createApp({ config: () => config!, store, log: () => {} });
+  const app = createApp({ config: () => config!, store, log: () => {}, web: options.web });
   const server = await listen(app);
   config = {
     publicUrl: new URL(server.url),
