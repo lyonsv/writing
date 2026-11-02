@@ -6,6 +6,7 @@ import { HTTPException } from 'hono/http-exception';
 import { matchedRoutes } from 'hono/route';
 
 import { CodeRepository } from './codes.js';
+import { StoreBusyError } from './store.js';
 import { UsedSet } from './usedSet.js';
 import { MAX_DOCUMENT_BYTES, SyncConflictError, SyncLimitError, SyncRepository, type Precondition, type SyncEntry } from './sync.js';
 import { isSyncPath } from './syncPaths.js';
@@ -619,6 +620,11 @@ export function createApp(deps: AppDeps): Hono<Env> {
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
   app.onError((error, c) => {
     if (error instanceof HTTPException && error.status < 500) return c.json({ error: 'invalid_request' }, error.status);
+    if (error instanceof StoreBusyError) {
+      // The storage backend (GitHub) is rate-limiting us: tell clients when to come back.
+      log('store.busy', { retryAfter: error.retryAfterSeconds });
+      return c.json({ error: 'busy' }, 503, { 'Retry-After': String(error.retryAfterSeconds), 'Cache-Control': 'no-store' });
+    }
     if (error instanceof ConfigError) log('config.error', { message: error.message });
     else log('server.error', { name: error.name, message: error.message.slice(0, 200) });
     // Errors can be raised before the hardening middleware runs (e.g. config): set its headers here too.

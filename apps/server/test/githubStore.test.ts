@@ -141,3 +141,47 @@ describe('GitHubStore (ADR 0021)', () => {
     expect(() => new GitHubStore({ token: 't', repo: 'not a repo', branch: 'b' })).toThrow();
   });
 });
+
+describe('GitHub rate limits → StoreBusyError → 503 + Retry-After (validator MINOR)', () => {
+  const limited = (status: number, headers: Record<string, string>, message = 'error') => async () =>
+    new Response(JSON.stringify({ message }), { status, headers });
+
+  it('recognises 429, secondary limits (403 + retry-after or message) and exhausted primary limits; not plain 403s', async () => {
+    const { StoreBusyError } = await import('../src/store');
+    const cases: Array<[() => Promise<Response>, number | null]> = [
+      [limited(429, {}), 60],
+      [limited(429, { 'retry-after': '17' }), 17],
+      [limited(403, { 'retry-after': '90' }, 'You have exceeded a secondary rate limit'), 90],
+      [limited(403, {}, 'You have exceeded a secondary rate limit. Please wait a few minutes.'), 60],
+      [limited(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 120) }), 120],
+      [limited(403, {}, 'Resource not accessible by personal access token'), null],
+    ];
+    for (const [fetchImpl, seconds] of cases) {
+      const store = new GitHubStore({ token: 't', repo: 'o/r', branch: 'preview', fetch: fetchImpl });
+      const err = await store.get('x.json').catch((e: unknown) => e);
+      if (seconds === null) {
+        expect(err).toBeInstanceOf(GitHubStoreError);
+        expect(err).not.toBeInstanceOf(StoreBusyError);
+      } else {
+        expect(err).toBeInstanceOf(StoreBusyError);
+        expect(Math.abs((err as InstanceType<typeof StoreBusyError>).retryAfterSeconds - seconds)).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('the API answers 503 with Retry-After when storage is rate-limited', async () => {
+    const { setup, signIn, bearer } = await import('./helpers');
+    const { StoreBusyError } = await import('../src/store');
+    const h = setup();
+    const { token } = await signIn(h);
+    const realGet = h.store.get.bind(h.store);
+    h.store.get = async (key: string) => {
+      if (key === 'sync/manifest.json') throw new StoreBusyError(42);
+      return realGet(key);
+    };
+    const res = await h.req('/api/sync/manifest', bearer(token));
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('42');
+    expect(await res.json()).toEqual({ error: 'busy' });
+  });
+});

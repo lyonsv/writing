@@ -21,6 +21,7 @@ const box: SecretBox = {
 let github: Awaited<ReturnType<typeof startMockGitHub>>;
 let server: Awaited<ReturnType<typeof startTestServer>>;
 let base: string;
+let busyHits = 0;
 
 interface Device {
   name: string;
@@ -30,8 +31,8 @@ interface Device {
   sync: SyncService;
   trashed: string[];
   external: ExternalChange[];
-  /** Simulated network: when false every request fails like an unreachable server. */
-  net: { up: boolean };
+  /** Simulated network: when false every request fails like an unreachable server; busy → 503 + Retry-After on sync. */
+  net: { up: boolean; busy?: number };
 }
 
 async function device(name: string, serverUrl = server.url, opts: { now?: () => number } = {}): Promise<Device> {
@@ -42,11 +43,15 @@ async function device(name: string, serverUrl = server.url, opts: { now?: () => 
   const external: ExternalChange[] = [];
   const library = new FileSystemLibrary(root, { now: () => new Date(2026, 10, 2, 12, 0), onExternalChange: (c) => external.push(c) });
   await library.init();
-  const net = { up: true };
+  const net: { up: boolean; busy?: number } = { up: true };
   const account = new AccountManager({
     file: path.join(dir, 'session.bin'),
     fetch: async (input, init) => {
       if (!net.up) throw new TypeError('fetch failed');
+      if (net.busy !== undefined && String(input).includes('/api/sync/')) {
+        busyHits++;
+        return new Response('{"error":"busy"}', { status: 503, headers: { 'Retry-After': String(net.busy) } });
+      }
       return fetch(input, init);
     },
     serverUrl: () => serverUrl,
@@ -332,6 +337,26 @@ describe('two desktop clients against the local server', () => {
     expect(await remoteText()).toBe('v3');
     // Nothing is lost while held: the local file kept every edit, and the base only moved on upload.
     expect(read(a, 'doc.md')).toBe('v3');
+  });
+
+  it('honours 503 Retry-After: stops, waits as told (even for Sync Now), then resumes (validator MINOR)', async () => {
+    let t = 1_000_000;
+    const a = await device('A', server.url, { now: () => t });
+    write(a, 'doc.md', 'v1');
+    a.net.busy = 120;
+    await a.sync.syncNow();
+    expect(a.sync.status()).toMatchObject({ state: 'error', message: expect.stringMatching(/busy; retrying in 1[2-4]\d s/) });
+    const hits = busyHits;
+    await a.sync.syncNow(); // Sync Now while backing off: no requests at all
+    await a.sync.syncNow('scheduled');
+    expect(busyHits).toBe(hits);
+    a.net.busy = undefined;
+    t += 150_000; // past Retry-After
+    await a.sync.syncNow();
+    expect(a.sync.status().state).toBe('idle');
+    const b = await device('B');
+    await b.sync.syncNow();
+    expect(read(b, 'doc.md')).toBe('v1');
   });
 
   it('keeps going past documents the server refuses, and reports them', async () => {

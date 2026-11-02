@@ -109,3 +109,7 @@ Every write is a commit, so the short-lived sign-in values no longer get a file 
   - Editing *several* documents concurrently multiplies that per document, but a person edits one at a time, and a switch flushes the previous one.
   - **Server-wide:** two devices both at the worst case reach ~480 commits/h, just under the limit; typical use is ~240. Beyond the limit, GitHub's 403/429 become **503 + `Retry-After`** and clients back off (see the next amendment). Nothing is lost: edits wait on disk.
   - Read calls stay ~0 when idle (304s).
+- **Rate-limit responses (validator, MINOR).**
+  - **Server:** `GitHubStore` recognises GitHub's limits (429; 403 with `retry-after`, with `x-ratelimit-remaining: 0`, or with a "rate limit" message, i.e. secondary limits). Plain permission 403s are left alone. It throws `StoreBusyError`, and the API answers **503 `{"error":"busy"}` with `Retry-After`** (GitHub's hint, the primary-limit reset, or 60 s).
+  - **Clients (shared core, `packages/core/src/syncHttp.ts`):** `HttpSyncRemote` maps 503/429 to `SyncBusyError` (with `retryAfterMs`). `SyncBackoff` waits the longer of `Retry-After` and an exponential backoff (30 s doubling to 30 min, ±20% jitter), and resets on success.
+  - The desktop skips every run, Sync Now included, while backing off, shows "Server busy; retrying in N s", and schedules one retry. Web/iOS use the same classes.

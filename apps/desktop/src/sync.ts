@@ -4,6 +4,8 @@ import path from 'node:path';
 
 import {
   HttpSyncRemote,
+  SyncBackoff,
+  SyncBusyError,
   foldPathCase,
   isSyncablePath,
   UploadThrottle,
@@ -169,6 +171,9 @@ export class SyncService {
   /** Per-path upload throttle (ADR 0021 amendments): keeps commits within GitHub's limits. */
   private readonly throttle: UploadThrottle;
   private heldTimer: NodeJS.Timeout | undefined;
+  /** Server said "busy" (503/429): wait as told, backing off further on repeats. */
+  private readonly backoff: SyncBackoff;
+  private busyTimer: NodeJS.Timeout | undefined;
   private timer: NodeJS.Timeout | undefined;
   private debounce: NodeJS.Timeout | undefined;
   private stopped = false;
@@ -177,6 +182,7 @@ export class SyncService {
 
   constructor(private readonly options: SyncServiceOptions) {
     this.throttle = new UploadThrottle(options.now ?? Date.now);
+    this.backoff = new SyncBackoff(options.now ?? Date.now);
   }
 
   status(): SyncStatus {
@@ -202,6 +208,7 @@ export class SyncService {
     clearInterval(this.timer);
     clearTimeout(this.debounce);
     clearTimeout(this.heldTimer);
+    clearTimeout(this.busyTimer);
   }
 
   /** Called when the account status changes (sign in / out / revoked). */
@@ -291,6 +298,8 @@ export class SyncService {
   private async runOnce(trigger: UploadTrigger = 'scheduled'): Promise<void> {
     const account = this.options.account.status();
     if (account.state !== 'signed-in') return this.setStatus({ state: 'off' });
+    // Backing off after a 503/429: don't add to the load, even for Sync Now. One retry is scheduled.
+    if (this.backoff.waitMs() > 0) return;
     const previous = this.statusValue;
     this.setStatus({ ...previous, state: 'syncing' });
     if (this.options.beforeSync && !(await this.options.beforeSync())) {
@@ -315,6 +324,7 @@ export class SyncService {
         onUploaded: (p) => this.throttle.uploaded(p),
       });
       await persist();
+      this.backoff.succeed();
       this.lastReport = report;
       // Held uploads go as soon as the throttle allows (at most a minute later).
       clearTimeout(this.heldTimer);
@@ -339,7 +349,13 @@ export class SyncService {
       this.setStatus({ state: 'idle', lastSyncedAt: new Date().toISOString(), ...(notes.length ? { message: notes.join('; ') } : {}) });
     } catch (error) {
       await persist().catch(() => undefined);
-      if (error instanceof AccountError) {
+      if (error instanceof SyncBusyError) {
+        const wait = this.backoff.fail(error.retryAfterMs);
+        clearTimeout(this.busyTimer);
+        this.busyTimer = setTimeout(() => void this.syncNow('scheduled'), wait + 50);
+        this.busyTimer.unref?.();
+        this.setStatus({ ...previous, state: 'error', message: `Server busy; retrying in ${Math.ceil(wait / 1000)} s` });
+      } else if (error instanceof AccountError) {
         this.setStatus(this.options.account.status().state === 'signed-in' ? { state: 'error', message: error.message } : { state: 'off' });
       } else if (error instanceof TypeError || (error as Error).name === 'TimeoutError' || (error as Error).name === 'AbortError') {
         this.setStatus({ ...previous, state: 'offline', message: 'Can’t reach the server' });

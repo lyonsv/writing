@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { PreconditionFailedError, type KeyValueStore, type PutOptions, type StoredItem } from './store.js';
+import { PreconditionFailedError, StoreBusyError, type KeyValueStore, type PutOptions, type StoredItem } from './store.js';
 
 /**
  * `KeyValueStore` on a private GitHub repository, via the REST Contents API
@@ -94,7 +94,10 @@ export class GitHubStore implements KeyValueStore {
 
   private async call(url: string, init: RequestInit): Promise<Response> {
     this.calls++;
-    return this.fetchImpl(url, { ...init, signal: AbortSignal.timeout(20_000) });
+    const res = await this.fetchImpl(url, { ...init, signal: AbortSignal.timeout(20_000) });
+    const busy = await rateLimited(res);
+    if (busy !== null) throw new StoreBusyError(busy);
+    return res;
   }
 
   private async fail(res: Response, what: string): Promise<never> {
@@ -217,6 +220,28 @@ export class GitHubStore implements KeyValueStore {
       await jitter(attempt);
     }
   }
+}
+
+/**
+ * GitHub's rate limiting, per its docs: 429, or 403 with `retry-after`,
+ * `x-ratelimit-remaining: 0`, or a "rate limit" message (secondary limits). Returns
+ * the seconds to wait, or null if this isn't a rate-limit response. (A plain 403
+ * is a permissions error and is left alone.)
+ */
+async function rateLimited(res: Response): Promise<number | null> {
+  if (res.status !== 429 && res.status !== 403) return null;
+  const retryAfter = Number(res.headers.get('retry-after'));
+  const remaining = res.headers.get('x-ratelimit-remaining');
+  const reset = Number(res.headers.get('x-ratelimit-reset'));
+  let limited = res.status === 429 || (Number.isFinite(retryAfter) && res.headers.has('retry-after')) || remaining === '0';
+  if (!limited) {
+    const text = await res.clone().text().catch(() => '');
+    limited = /rate limit/i.test(text);
+  }
+  if (!limited) return null;
+  if (res.headers.has('retry-after') && Number.isFinite(retryAfter) && retryAfter >= 0) return Math.ceil(retryAfter);
+  if (remaining === '0' && Number.isFinite(reset) && reset > 0) return Math.max(1, Math.ceil(reset - Date.now() / 1000));
+  return 60; // GitHub: wait at least a minute after a secondary limit with no hint
 }
 
 function jitter(attempt: number): Promise<void> {

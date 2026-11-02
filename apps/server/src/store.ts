@@ -38,6 +38,18 @@ export interface KeyValueStore {
   putBytes(key: string, bytes: Uint8Array, options?: PutOptions): Promise<{ etag: string }>;
 }
 
+/**
+ * The storage backend is rate-limiting us (GitHub: 429, or 403 for the primary
+ * or secondary rate limit). The API answers 503 with `Retry-After`, and clients
+ * back off (core `SyncBackoff`).
+ */
+export class StoreBusyError extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super(`storage is rate-limited; retry after ${retryAfterSeconds}s`);
+    this.name = 'StoreBusyError';
+  }
+}
+
 export class PreconditionFailedError extends Error {
   constructor() {
     super('Precondition failed');
