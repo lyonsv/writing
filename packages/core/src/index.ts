@@ -6,3 +6,5 @@ export * from './markdown';
 export * from './bridge';
 export * from './conflict';
 export * from './saveScheduler';
+export * from './focus';
+export * from './settings';
