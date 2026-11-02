@@ -14,7 +14,7 @@ import { PKCE_CHALLENGE, PKCE_VERIFIER, Pepper, Sealer, pkceChallenge, randomTok
 import { DeviceRepository, TOKEN_TTL_MS, cleanDeviceName, toDeviceInfo, type DeviceRecord, type Identity } from './devices.js';
 import { GitHubError, authorizeUrl, fetchGitHubIdentity, type Fetch } from './github.js';
 import { RateLimiter } from './rateLimit.js';
-import { isAllowedNativeRedirect, safeReturnPath } from './redirects.js';
+import { CUSTOM_SCHEME_REDIRECT, isAllowedNativeRedirect, safeReturnPath } from './redirects.js';
 import type { KeyValueStore } from './store.js';
 
 /**
@@ -259,10 +259,27 @@ export function createApp(deps: AppDeps): Hono<Env> {
     const ru = q.redirect_uri ?? '';
     const cc = q.code_challenge ?? '';
     const cs = q.state ?? '';
-    if (!isAllowedNativeRedirect(ru) || !PKCE_CHALLENGE.test(cc) || q.code_challenge_method !== 'S256' || !STATE.test(cs)) {
+    const allowCustomScheme = getConfig().allowNativeSchemeRedirect === true;
+    if (
+      !isAllowedNativeRedirect(ru, { allowCustomScheme }) ||
+      !PKCE_CHALLENGE.test(cc) ||
+      q.code_challenge_method !== 'S256' ||
+      !STATE.test(cs)
+    ) {
       log('signin.bad_start');
       return page(c, 400, 'Invalid sign-in request', 'Start signing in again from the Margin app.');
     }
+    // Defence in depth for the custom scheme: an app opens this URL itself (Sec-Fetch-Site
+    // "none" or absent); a link or redirect from another site is refused.
+    const site = c.req.header('Sec-Fetch-Site');
+    if (ru === CUSTOM_SCHEME_REDIRECT && site !== undefined && site !== 'none') {
+      log('signin.bad_start');
+      return page(c, 400, 'Invalid sign-in request', 'Sign-in must be started from the Margin app, not from a web page.');
+    }
+    const client =
+      ru === CUSTOM_SCHEME_REDIRECT
+        ? 'an iPhone app (development build, returning to margin://)'
+        : 'a Mac app (Margin on this computer, returning to 127.0.0.1)';
     const dn = cleanDeviceName(q.device_name);
     const csrf = randomToken(24);
     // Single-use on the server too, so a captured confirm cookie can't be replayed.
@@ -275,7 +292,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
       `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Sign in a new device?</title>` +
         `<body style="font:16px/1.5 -apple-system,system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem">` +
         `<h1 style="font-size:1.2rem">Sign in a new device “${name}”?</h1>` +
-        `<p>Margin on this device will be able to read and change your synced documents. Only continue if you just chose Sign In in Margin.</p>` +
+        `<p>Requested by ${escapeHtml(client)}. That device will be able to read and change your synced documents.</p>` +
+        `<p><strong>Only continue if you just chose Sign In in Margin yourself.</strong> If this page opened from a link, an email or another website, press Cancel.</p>` +
         `<form id="margin-confirm" method="post" action="/api/auth/native/start">` +
         `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}">` +
         `<button type="submit" name="decision" value="continue">Continue to GitHub</button> ` +
@@ -303,7 +321,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       pending.exp <= now() ||
       c.req.header('Origin') !== cfg.publicUrl.origin ||
       !safeEqual(pending.csrf, csrf) ||
-      !isAllowedNativeRedirect(pending.ru) ||
+      !isAllowedNativeRedirect(pending.ru, { allowCustomScheme: cfg.allowNativeSchemeRedirect === true }) ||
       !(await confirms.burn(pending.csrf))
     ) {
       log('signin.bad_confirm');

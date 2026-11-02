@@ -90,15 +90,17 @@ export default function EditorScreen() {
     () =>
       setEditorFlusher(
         () =>
-          new Promise<void>((resolve) => {
+          new Promise<boolean>((resolve) => {
             const id = ++nextFlush.current;
+            // No answer in time: we can't know the WebView has nothing unsaved, so report
+            // "not clean" (the switch is refused / the background flush is logged as incomplete).
             const timer = setTimeout(() => {
               waiters.current.delete(id);
-              resolve(); // an editor that doesn't answer (not mounted yet) has nothing unsaved
+              resolve(false);
             }, 1500);
             waiters.current.set(id, () => {
               clearTimeout(timer);
-              resolve();
+              resolve(true);
             });
             setFlushRequest(id);
           }),

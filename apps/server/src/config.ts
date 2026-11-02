@@ -25,6 +25,12 @@ export interface Config {
   githubApiUrl: string;
   /** Session cookies get `Secure` and the `__Host-` prefix unless the public URL is plain-http loopback. */
   secureCookies: boolean;
+  /**
+   * Accept the iOS dev redirect `margin://auth/callback` (Expo Go / dev builds).
+   * `ALLOW_NATIVE_SCHEME_REDIRECT=1`; refused in Production (ADR 0011/0017 amendments, 0019):
+   * no native iOS app is distributed, and any app can claim the scheme.
+   */
+  allowNativeSchemeRedirect?: boolean;
 }
 
 export class ConfigError extends Error {}
@@ -115,6 +121,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (authSecret.length < 32) throw new ConfigError('AUTH_SECRET must be at least 32 characters');
   const githubOAuthUrl = httpsOrLoopback(env.GITHUB_OAUTH_URL?.trim() || 'https://github.com', 'GITHUB_OAUTH_URL');
   const githubApiUrl = httpsOrLoopback(env.GITHUB_API_URL?.trim() || 'https://api.github.com', 'GITHUB_API_URL');
+  const allowNativeSchemeRedirect = env.ALLOW_NATIVE_SCHEME_REDIRECT === '1';
+  if (allowNativeSchemeRedirect && env.VERCEL_ENV === 'production') {
+    throw new ConfigError('ALLOW_NATIVE_SCHEME_REDIRECT must not be set in Production');
+  }
   return {
     publicUrl,
     githubClientId: required(env, 'GITHUB_CLIENT_ID'),
@@ -124,6 +134,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     githubOAuthUrl: githubOAuthUrl.origin,
     githubApiUrl: githubApiUrl.origin,
     secureCookies: publicUrl.protocol === 'https:',
+    allowNativeSchemeRedirect,
   };
 }
 

@@ -136,9 +136,10 @@ export function useWorkspace(
   const flushCurrent = useCallback(async (): Promise<boolean> => {
     const s = sessionRef.current;
     if (!s) return true;
-    await flushEditor();
+    // An editor that didn't answer may still hold unsaved text: not clean (validator M6 minor).
+    const answered = await flushEditor();
     await s.scheduler.flush();
-    return !s.scheduler.dirty;
+    return answered && !s.scheduler.dirty;
   }, []);
 
   const activate = useCallback(

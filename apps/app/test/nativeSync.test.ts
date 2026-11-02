@@ -26,9 +26,10 @@ beforeAll(async () => {
 afterAll(async () => {
   await github.close();
 });
-// A fresh server (empty store) per test.
+// A fresh server (empty store) per test. margin:// is a development-only redirect
+// (ALLOW_NATIVE_SCHEME_REDIRECT, ADR 0017 amendments): these tests run the dev configuration.
 beforeEach(async () => {
-  server = await startTestServer(github, OWNER);
+  server = await startTestServer(github, OWNER, { allowNativeSchemeRedirect: true });
   base = mkdtempSync(path.join(tmpdir(), 'margin-ios-sync-'));
 });
 afterEach(async () => {
@@ -125,6 +126,18 @@ describe('iOS sign-in (margin://auth/callback through the confirmation page)', (
     expect(devices.find((d) => d.current)?.name).toBe('iPhone');
     expect((await p.account.signOut()).state).toBe('signed-out');
     expect(p.secrets.map.size).toBe(0);
+  });
+
+  it('a production-configured server refuses the margin:// sign-in (no code is ever issued)', async () => {
+    const prod = await startTestServer(github, OWNER);
+    try {
+      const p = phone('iPhone', { serverUrl: prod.url });
+      await expect(p.account.signIn()).rejects.toThrow(AccountError);
+      expect((await p.account.status()).state).toBe('signed-out');
+      expect(p.secrets.map.size).toBe(0);
+    } finally {
+      await prod.close();
+    }
   });
 
   it('a cancelled confirmation page signs nothing in', async () => {

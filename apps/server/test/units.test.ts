@@ -260,3 +260,21 @@ describe('deployability', () => {
     delete process.env.MARGIN_STORE;
   });
 });
+
+describe('ALLOW_NATIVE_SCHEME_REDIRECT (dev-only margin:// redirect)', () => {
+  const base = {
+    PUBLIC_URL: 'https://margin.test',
+    GITHUB_CLIENT_ID: 'id',
+    GITHUB_CLIENT_SECRET: 'secret',
+    ALLOWED_GITHUB_LOGINS: 'lyonsv:1',
+    AUTH_SECRET: 'x'.repeat(40),
+  };
+  it('is off unless set to 1', () => {
+    expect(loadConfig(base).allowNativeSchemeRedirect).toBe(false);
+    expect(loadConfig({ ...base, ALLOW_NATIVE_SCHEME_REDIRECT: 'true' }).allowNativeSchemeRedirect).toBe(false);
+    expect(loadConfig({ ...base, ALLOW_NATIVE_SCHEME_REDIRECT: '1' }).allowNativeSchemeRedirect).toBe(true);
+  });
+  it('fails closed in Production', () => {
+    expect(() => loadConfig({ ...base, ALLOW_NATIVE_SCHEME_REDIRECT: '1', VERCEL: '1', VERCEL_ENV: 'production' })).toThrow(ConfigError);
+  });
+});

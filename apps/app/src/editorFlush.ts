@@ -6,7 +6,8 @@ import { FLUSH_EVENT } from '@margin/core';
  * On iOS it lives in a WebView: the editor screen registers a flusher that
  * round-trips through the DOM-component bridge (`flushRequest` → `onFlushed`).
  */
-type Flusher = () => Promise<void>;
+/** Resolves true once the editor has handed over its text; false if it didn't answer in time. */
+type Flusher = () => Promise<boolean>;
 let flusher: Flusher | null = null;
 
 export function setEditorFlusher(f: Flusher): () => void {
@@ -16,8 +17,10 @@ export function setEditorFlusher(f: Flusher): () => void {
   };
 }
 
-export async function flushEditor(): Promise<void> {
+/** True if the editor's pending text is now in the save pipeline (or there is no editor). */
+export async function flushEditor(): Promise<boolean> {
   if (flusher) return flusher();
   const w = typeof window !== 'undefined' ? (window as { dispatchEvent?: (e: Event) => boolean }) : undefined;
   if (typeof w?.dispatchEvent === 'function' && typeof Event === 'function') w.dispatchEvent(new Event(FLUSH_EVENT));
+  return true;
 }

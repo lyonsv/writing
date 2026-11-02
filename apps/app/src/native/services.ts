@@ -108,7 +108,12 @@ export function startLifecycle(): void {
     } else {
       // background / inactive: get every keystroke to disk now; iOS may suspend or kill us next.
       sync.pause();
+      // No background-task API in Expo Go (beginBackgroundTask needs a native module); iOS
+      // normally allows a few seconds after backgrounding, which a local flush fits in.
       void flushWorkspace()
+        .then((clean) => {
+          if (!clean) console.warn('Margin: the editor did not confirm its flush before going to the background');
+        })
         .then(() => library.idle())
         .then(() => settingsStore.flushed())
         .catch((e: unknown) => console.error('Margin: flush on background failed', e));

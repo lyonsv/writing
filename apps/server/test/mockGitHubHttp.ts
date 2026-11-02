@@ -84,7 +84,7 @@ export async function startMockGitHub(initial: GitHubUser) {
 }
 
 /** A Margin server (in-memory store) talking to the mock GitHub. */
-export async function startTestServer(github: { url: string }, allowed: GitHubUser) {
+export async function startTestServer(github: { url: string }, allowed: GitHubUser, extra: Partial<Config> = {}) {
   let config: Config | undefined;
   const store = new MemoryStore();
   const app = createApp({ config: () => config!, store, log: () => {} });
@@ -98,6 +98,7 @@ export async function startTestServer(github: { url: string }, allowed: GitHubUs
     githubOAuthUrl: github.url,
     githubApiUrl: github.url,
     secureCookies: false,
+    ...extra,
   };
   return { url: server.url, store, app, close: server.close };
 }

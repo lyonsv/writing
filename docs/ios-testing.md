@@ -2,6 +2,8 @@
 
 No agent can run iOS here (no Xcode, no simulator; ADR 0005). Everything below is **untested on a device** until you've run it. Expect 20–30 minutes. Note what fails and roughly where.
 
+> **Sign-in from Expo Go needs a development server.** Since the validator's fix, production (`margin-sync.vercel.app`) refuses the `margin://` redirect; it's for development builds only (ADR 0017 amendments). The iPhone's supported route is the installable web app (ADR 0019). To test native sign-in, run `pnpm dev:server` with `ALLOW_NATIVE_SCHEME_REDIRECT=1` in `apps/server/.env.local` and a GitHub OAuth App for that address, and point Settings → Server at it.
+
 ## Setup (once)
 1. On the iPhone, install **Expo Go** from the App Store (it must support SDK 58).
 2. On the Mac, from the repo root: `pnpm install`, then `pnpm --filter @margin/app start` (Expo dev server). The Mac and iPhone must be on the same Wi-Fi network. If they can't see each other, use `pnpm --filter @margin/app exec expo start --tunnel`.
@@ -46,6 +48,12 @@ Your iPhone library is separate from `~/Documents/Margin` until you sign in and 
 - [ ] Airplane Mode: the status says **Offline**; writing still works and syncs later.
 - [ ] Revoke the iPhone from the Mac's Account and Devices: on the next sync the iPhone shows signed out, and its documents stay.
 - [ ] Sign Out on the iPhone: its documents stay.
+
+## 6. Security and robustness (validator cases)
+- [ ] **Sign-in started from a link is refused:** in Safari (not Margin), open `<server>/api/auth/native/start?redirect_uri=margin://auth/callback&code_challenge=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&code_challenge_method=S256&state=abcdefghijklmnop` from a link on a web page (e.g. paste it into a note and tap it). Expected: "Sign-in must be started from the Margin app" (or "Invalid sign-in request" on production), with no confirmation page.
+- [ ] **Background mid-sync:** start a pull-to-refresh with many documents, immediately go to the home screen for a minute, come back. No error that sticks, nothing duplicated or lost; the next sync settles to "Synced".
+- [ ] **Reinstall:** delete Margin (in Expo Go: clear the project / reinstall Expo Go), reinstall, open. The Keychain token may survive app deletion (iOS keeps Keychain items): Margin may show you as signed in with an empty library, which then downloads everything. Revoke the old device in Account and Devices if you don't want it.
+- [ ] **Conflict while open:** open a document on the iPhone and keep typing. Meanwhile edit the same document on the Mac and Sync Now there, then pull to refresh on the iPhone (or wait). Your iPhone text must survive: either the editor reloads (if you'd paused) or your version lands in `name (conflict …).md` and the editor follows it, with a notice.
 
 ## Reporting
 For anything that fails, note the step, what you saw, and (if the editor is involved) Settings → Diagnostics. Expo Go's shake menu → "Open JS debugger" shows console errors.

@@ -40,3 +40,4 @@ We chose loopback over `margin://` for Electron because:
 
 ## Amendments (2026-11-02, M6)
 - `margin://auth/callback` is **enabled** (`CUSTOM_SCHEME_ENABLED = true`) now that the iOS app registers the scheme. Expo Go needs no `exp://` allowlist entry (ASWebAuthenticationSession captures the callback itself). Scheme-claim risk and mitigations: ADR 0017.
+- **Superseded in part (validator M6 MAJOR):** `margin://auth/callback` is accepted only on servers with `ALLOW_NATIVE_SCHEME_REDIRECT=1` (development), never in Production; there `Sec-Fetch-Site` must be `none` or absent. See ADR 0017 amendments.

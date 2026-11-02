@@ -251,11 +251,33 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(new URL(res.headers.get('Location')!).searchParams.get('error')).toBe('server_error');
   });
 
-  it('accepts the iOS custom scheme margin://auth/callback exactly (M6), after the confirmation page', async () => {
+  const startQuery = (ru: string) =>
+    `/api/auth/native/start?${new URLSearchParams({ redirect_uri: ru, code_challenge: s256(newVerifier()), code_challenge_method: 'S256', state: 'appstate-0123456789' })}`;
+
+  it('refuses the iOS custom scheme in the production configuration (flag unset): 400, no redirect', async () => {
     expect(CUSTOM_SCHEME_REDIRECT).toBe(NATIVE_CUSTOM_SCHEME_REDIRECT);
     const h = setup();
+    const res = await h.req(startQuery('margin://auth/callback'));
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Location')).toBeNull();
+    expect(res.headers.getSetCookie().some((c) => c.includes('margin_confirm'))).toBe(false);
+    // ...and a confirm cookie minted under a dev config can't be replayed into a production config.
+  });
+
+  it('desktop loopback still signs in under the production configuration', async () => {
+    const h = setup();
+    const a = await nativeAuthorize(h, OWNER, { redirectUri: LOOPBACK });
+    expect(a.location!.toString().startsWith(`${LOOPBACK}?`)).toBe(true);
+    const res = await exchange(h, { code: a.location!.searchParams.get('code'), code_verifier: a.verifier, redirect_uri: LOOPBACK });
+    expect(res.status).toBe(200);
+  });
+
+  it('dev configuration (ALLOW_NATIVE_SCHEME_REDIRECT): accepts margin://auth/callback exactly, after the confirmation page', async () => {
+    const h = setup({ config: { allowNativeSchemeRedirect: true } });
+    const page = await h.req(startQuery('margin://auth/callback'));
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain('an iPhone app');
     const a = await nativeAuthorize(h, OWNER, { redirectUri: 'margin://auth/callback', deviceName: 'iPhone' });
-    expect(a.start.status).toBe(302); // got past "Sign in a new device?" (nativeStart pressed Continue)
     expect(a.location!.toString().startsWith('margin://auth/callback?')).toBe(true);
     expect(a.location!.searchParams.get('state')).toBe(a.appState);
     const code = a.location!.searchParams.get('code')!;
@@ -266,15 +288,29 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('cancelling the confirmation page returns access_denied to the custom scheme, without GitHub', async () => {
+  it('dev configuration: a margin:// start from another site (Sec-Fetch-Site cross-site/same-site) is refused', async () => {
+    const h = setup({ config: { allowNativeSchemeRedirect: true } });
+    for (const site of ['cross-site', 'same-site', 'same-origin']) {
+      const res = await h.req(startQuery('margin://auth/callback'), { headers: { 'Sec-Fetch-Site': site } });
+      expect(res.status, site).toBe(400);
+      expect(res.headers.get('Location')).toBeNull();
+    }
+    expect((await h.req(startQuery('margin://auth/callback'), { headers: { 'Sec-Fetch-Site': 'none' } })).status).toBe(200);
+  });
+
+  it('the confirmation page names the kind of client: a Mac app for loopback', async () => {
     const h = setup();
+    const res = await h.req(startQuery(LOOPBACK), { headers: { 'Sec-Fetch-Site': 'cross-site' } });
+    expect(res.status).toBe(200); // loopback isn't scheme-claimable; the page itself is the guard
+    const text = await res.text();
+    expect(text).toContain('a Mac app');
+    expect(text).toContain('If this page opened from a link');
+  });
+
+  it('cancelling the confirmation page returns access_denied to the custom scheme (dev), without GitHub', async () => {
+    const h = setup({ config: { allowNativeSchemeRedirect: true } });
     const jar = new Jar();
-    const res = await nativeStart(
-      h,
-      jar,
-      `/api/auth/native/start?${new URLSearchParams({ redirect_uri: 'margin://auth/callback', code_challenge: s256(newVerifier()), code_challenge_method: 'S256', state: 'appstate-0123456789' })}`,
-      'cancel',
-    );
+    const res = await nativeStart(h, jar, startQuery('margin://auth/callback'), 'cancel');
     const loc = new URL(res.headers.get('Location')!);
     expect(loc.protocol).toBe('margin:');
     expect(loc.searchParams.get('error')).toBe('access_denied');
@@ -398,8 +434,8 @@ describe('open redirects', () => {
     'http://0x7f000001:8080/callback',
     'margin://auth/callback/../../evil',
     'margin://evil/callback',
-    'margin://auth/callback/',
-    'MARGIN://auth/callback',
+    'margin://auth/callback', // production configuration: never (dev flag only)
+    'margin://auth/callback/',    'MARGIN://auth/callback',
     'margin://auth/callback#x',
     'margin:auth/callback',
     'margin://auth/callback?x=1',
