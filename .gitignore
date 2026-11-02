@@ -14,3 +14,5 @@ apps/app/dist/
 apps/desktop/release/
 *.tsbuildinfo
 .vercel
+apps/server/public/
+apps/server/web/

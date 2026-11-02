@@ -44,6 +44,7 @@ export const ROUTE_BODY_LIMITS: Readonly<Record<string, number>> = {
   'GET /api/auth/native/start': 0,
   'POST /api/auth/native/start': 2 * 1024,
   'GET /api/auth/web/start': 0,
+  'GET *': 0,
   'GET /api/auth/github/callback': 0,
   'POST /api/auth/native/token': 8 * 1024,
   'GET /api/me': 0,
@@ -71,7 +72,31 @@ export interface AppDeps {
   now?: () => number;
   /** Structured log sink. Never receives tokens, codes, state or GitHub tokens. */
   log?: Logger;
+  /**
+   * The hosted web app (ADR 0020). `shell` returns the app's index.html (null
+   * if there's no web build). `asset` serves static files for local dev and
+   * tests; on Vercel the CDN serves them from `public/` and never reaches here.
+   */
+  web?: {
+    shell: () => Promise<string | null>;
+    asset?: (pathname: string) => Promise<WebAsset | null>;
+  };
 }
+
+export interface WebAsset {
+  body: Uint8Array;
+  type: string;
+  /** Content-hashed name: cache for a year. */
+  immutable: boolean;
+}
+
+/**
+ * The signed-in app shell's CSP: our own scripts only; inline styles for
+ * react-native-web and CodeMirror; same-origin API calls; our service worker.
+ */
+export const SHELL_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
+  "connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 type Env = { Variables: { device: DeviceRecord; via: 'bearer' | 'cookie' } };
 
@@ -175,7 +200,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
   app.use('*', async (c, next) => {
     getConfig(); // fail closed before doing anything
     await next();
-    c.header('Cache-Control', 'no-store');
+    // Static files set their own caching (dev/test only; the CDN serves them on Vercel).
+    if (!c.res.headers.has('Cache-Control')) c.header('Cache-Control', 'no-store');
     c.header('X-Content-Type-Options', 'nosniff');
     c.header('Referrer-Policy', 'no-referrer');
     c.header('X-Frame-Options', 'DENY');
@@ -191,10 +217,49 @@ export function createApp(deps: AppDeps): Hono<Env> {
     return bodyLimit({ maxSize, onError: (cx) => cx.json({ error: 'payload_too_large' }, 413) })(c, next);
   });
 
+  // --- Static files of the web app (local dev and tests only; public, no user data).
+  if (deps.web?.asset) {
+    const asset = deps.web.asset;
+    app.use('*', async (c, next) => {
+      if ((c.req.method !== 'GET' && c.req.method !== 'HEAD') || c.req.path.startsWith('/api/')) return next();
+      const file = await asset(c.req.path);
+      if (!file) return next();
+      return c.body(file.body as unknown as ArrayBuffer, 200, {
+        'Content-Type': file.type,
+        'Cache-Control': file.immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+        // A service worker's own fetches obey its CSP: let it reach this origin.
+        ...(c.req.path === '/sw.js' ? { 'Content-Security-Policy': "default-src 'self'" } : {}),
+      });
+    });
+  }
+
   // --- The one auth gate. Deny by default.
   const unauthorized = (c: Context) => {
     if (!limits.failedAuth.hit(clientIp(c))) return c.json({ error: 'rate_limited' }, 429, { 'Retry-After': '600' });
+    // A signed-out visit to the web app gets the sign-in page (still a 401), not JSON.
+    if (deps.web && (c.req.method === 'GET' || c.req.method === 'HEAD') && !c.req.path.startsWith('/api/')) return signInPage(c);
     return c.json({ error: 'unauthorized' }, 401, { 'WWW-Authenticate': 'Bearer' });
+  };
+
+  /** Minimal sign-in page for the hosted web app (ADR 0020): one link into the web OAuth flow. */
+  const signInPage = (c: Context) => {
+    const back = safeReturnPath(c.req.path, getConfig().publicUrl);
+    const start = `/api/auth/web/start?return_to=${encodeURIComponent(back)}`;
+    c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'");
+    return c.html(
+      `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">` +
+        `<title>Margin</title><link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/apple-touch-icon.png">` +
+        `<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Margin">` +
+        `<meta name="theme-color" content="#fbfbfa"><meta name="robots" content="noindex">` +
+        `<body style="margin:0;font:17px/1.5 -apple-system,system-ui,sans-serif;background:#fbfbfa;color:#1f1f1f">` +
+        `<main id="margin-signin" style="max-width:26rem;margin:0 auto;padding:22vh 1.5rem 2rem">` +
+        `<img src="/apple-touch-icon.png" width="64" height="64" alt="" style="border-radius:14px">` +
+        `<h1 style="font-size:1.4rem;margin:1rem 0 .25rem">Margin</h1>` +
+        `<p style="color:#6b6b68;margin:0 0 1.5rem">A quiet place to write. Sign in to open your library.</p>` +
+        `<a id="margin-signin-link" href="${escapeHtml(start)}" style="display:inline-block;padding:.7rem 1.1rem;border-radius:10px;background:#1f1f1f;color:#fbfbfa;text-decoration:none">Sign in with GitHub</a>` +
+        `</main></body></html>`,
+      401,
+    );
   };
 
   const requireAuth: MiddlewareHandler<Env> = async (c, next) => {
@@ -544,6 +609,19 @@ export function createApp(deps: AppDeps): Hono<Env> {
       return syncError(c, error);
     }
   });
+
+  // --- The web app shell (ADR 0020): any other page, signed in only (requireAuth ran above).
+  if (deps.web) {
+    const shell = deps.web.shell;
+    app.get('*', async (c) => {
+      if (c.req.path.startsWith('/api/')) return c.json({ error: 'not_found' }, 404);
+      const html = await shell();
+      if (!html) return c.json({ error: 'not_found' }, 404);
+      c.header('Content-Security-Policy', SHELL_CSP);
+      c.header('X-Margin-Shell', '1'); // the service worker caches only this, for offline launches
+      return c.html(html.replace('<head>', '<head><meta name="margin-hosted" content="1">'));
+    });
+  }
 
   app.notFound((c) => c.json({ error: 'not_found' }, 404));
   app.onError((error, c) => {

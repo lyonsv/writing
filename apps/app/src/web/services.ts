@@ -74,6 +74,12 @@ export function webServices(): WebServices {
     : null;
   services = { fs, library, ready, account, sync };
 
+  // Offline app shell (public/sw.js), only when served by a Margin server: never in
+  // Electron (no webServices there) or the dev server. It never caches /api.
+  if (account && 'serviceWorker' in navigator) {
+    void navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((e: unknown) => console.warn('Margin: no offline shell', e));
+  }
+
   if (sync && account) {
     let syncing = false;
     sync.onChange((s) => {

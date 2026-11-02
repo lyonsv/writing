@@ -162,6 +162,10 @@ outputs.push(
   [app('assets/favicon.png'), png(byName['icon-ios-light.svg'], 48)],
   [app('public/apple-touch-icon.png'), png(byName['icon-ios-light.svg'], 180)],
   [app('public/favicon.svg'), byName['icon-ios-light.svg']],
+  // Web app manifest (ADR 0020): full-bleed squares; "maskable" keeps the glyph inside the safe zone.
+  [app('public/icon-192.png'), png(byName['icon-ios-light.svg'], 192)],
+  [app('public/icon-512.png'), png(byName['icon-ios-light.svg'], 512)],
+  [app('public/icon-maskable-512.png'), png(svg(1024, 1024, `<rect width="1024" height="1024" fill="${C.paper}"/><g transform="translate(102.4 102.4) scale(0.8)">${glyph(LIGHT)}</g>`), 512)],
 );
 
 let stale = 0;

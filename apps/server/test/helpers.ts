@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 
-import { createApp, type Logger } from '../src/createApp';
+import { createApp, type AppDeps, type Logger } from '../src/createApp';
 import type { Config } from '../src/config';
 import { MemoryStore } from '../src/store';
 
@@ -111,13 +111,13 @@ export class Jar {
   }
 }
 
-export function setup(opts: { config?: Partial<Config>; now?: () => number } = {}) {
+export function setup(opts: { config?: Partial<Config>; now?: () => number; web?: AppDeps['web'] } = {}) {
   const store = new MemoryStore();
   const github = new MockGitHub();
   const logs: Array<{ event: string; fields?: Record<string, unknown> }> = [];
   const log: Logger = (event, fields) => logs.push({ event, fields });
   const config = testConfig(opts.config);
-  const app = createApp({ config, store, fetch: github.fetch, now: opts.now, log });
+  const app = createApp({ config, store, fetch: github.fetch, now: opts.now, log, web: opts.web });
   const req = (path: string, init: RequestInit = {}) => app.request(`https://margin.test${path}`, init);
   return { app, store, github, logs, config, req };
 }

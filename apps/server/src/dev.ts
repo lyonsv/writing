@@ -5,6 +5,7 @@ import { createApp } from './createApp.js';
 import { loadConfig } from './config.js';
 import { storeFromEnv } from './env.js';
 import { listen } from './local.js';
+import { webDir } from './webFiles.js';
 
 /**
  * Local dev server: `pnpm dev:server` (no Vercel login needed). Reads
@@ -17,6 +18,8 @@ process.env.MARGIN_STORE ??= 'memory';
 const port = Number(process.env.PORT ?? 3000);
 
 const config = loadConfig();
-const app = createApp({ config, store: storeFromEnv() });
+// The web app from the Expo export (`pnpm build:web`), if built: same origin as the API (ADR 0020).
+const webExport = path.resolve(import.meta.dirname, '../../app/dist');
+const app = createApp({ config, store: storeFromEnv(), web: existsSync(webExport) ? webDir(webExport) : undefined });
 const { url } = await listen(app, port);
 console.log(`Margin server on ${url} (public URL ${config.publicUrl.origin}, store ${process.env.MARGIN_STORE})`);
