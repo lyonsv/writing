@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DocumentStoreError, type ExternalChange } from '@margin/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { NativeLibrary, TRASH_RETENTION_MS, sha256Hex } from '../src/native/library';
+import { NativeLibrary, TRASH_RETENTION_MS, sha256Hex } from '../src/local/library';
 import { NodeFs } from './nodeFs';
 
 let base: string;

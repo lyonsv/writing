@@ -11,8 +11,8 @@ import { AccountManager } from '../../desktop/src/account';
 import { FileSystemLibrary } from '../../desktop/src/library';
 import { SyncService } from '../../desktop/src/sync';
 import { AccountError, NativeAccount, parseServerUrl, type SecretStore } from '../src/native/account';
-import { NativeLibrary } from '../src/native/library';
-import { NativeSyncService } from '../src/native/sync';
+import { NativeLibrary } from '../src/local/library';
+import { NativeSyncService } from '../src/local/sync';
 import { NodeFs } from './nodeFs';
 
 const OWNER = { login: 'lyonsv', id: 1234567 };

@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccountView } from '../components/account/AccountView';
 import { parseServerUrl } from '../src/native/account';
 import { diagnostics, onDiagnostics } from '../src/native/diagnostics';
-import type { TrashItem } from '../src/native/library';
+import type { TrashItem } from '../src/local/library';
 import { DARK, LIGHT } from '../src/native/palette';
 import { account, defaultServerUrl, library, sync } from '../src/native/services';
 import { syncLabel, useSyncStatus } from '../src/useSyncStatus';

@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { FsExistsError, type FsStat, type NativeFs } from '../src/native/nativeFs';
+import { FsExistsError, type FsStat, type NativeFs } from '../src/local/nativeFs';
 
 /**
  * `NativeFs` on the real filesystem under `base`, with the same contract as

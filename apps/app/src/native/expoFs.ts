@@ -7,7 +7,7 @@ import { Directory, File, Paths } from 'expo-file-system';
 // rename(2)s it over the target. That is the one call we take from the legacy module.
 import { EncodingType, writeAsStringAsync } from 'expo-file-system/legacy';
 
-import { FsExistsError, type FsStat, type NativeFs } from './nativeFs';
+import { FsExistsError, type FsStat, type NativeFs } from '../local/nativeFs';
 
 /** On-disk name from a file:// URI's last segment. */
 function nameOf(uri: string): string {

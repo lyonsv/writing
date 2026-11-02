@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DEV_SERVER_URL, PRODUCTION_SERVER_URL, defaultServerUrl } from '@margin/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { FileSettingsStore } from '../src/native/settings';
+import { FileSettingsStore } from '../src/local/settings';
 import { NodeFs } from './nodeFs';
 
 let base: string;

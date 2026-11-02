@@ -8,9 +8,9 @@ import { AppState } from 'react-native';
 
 import { NativeAccount, type SecretStore } from './account';
 import { ExpoFs } from './expoFs';
-import { NativeLibrary } from './library';
-import { FileSettingsStore } from './settings';
-import { NativeSyncService } from './sync';
+import { NativeLibrary } from '../local/library';
+import { FileSettingsStore } from '../local/settings';
+import { NativeSyncService } from '../local/sync';
 
 /**
  * The iOS app's singletons (ADR 0015): the library in the documents directory,

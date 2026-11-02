@@ -7,8 +7,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 // The core engine's fakes (in-memory server with the real API's semantics, and a fake device).
 import { FakeLocal, FakeRemote, enc, sha } from '../../../packages/core/test/syncFakes';
-import { NativeLibrary } from '../src/native/library';
-import { LibrarySyncLocal } from '../src/native/sync';
+import { NativeLibrary } from '../src/local/library';
+import { LibrarySyncLocal } from '../src/local/sync';
 import { NodeFs } from './nodeFs';
 
 /**
