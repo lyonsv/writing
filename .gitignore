@@ -8,3 +8,8 @@ out/
 .DS_Store
 .claude/
 *.log
+test-results/
+playwright-report/
+apps/app/dist/
+apps/desktop/release/
+*.tsbuildinfo
