@@ -450,6 +450,11 @@ app.on('before-quit', (event) => {
     try {
       const outcomes = await Promise.all(BrowserWindow.getAllWindows().map((w) => flushWindow(w)));
       await Promise.all([library?.idle(), settings?.idle(), treeWatcher?.close()]);
+      // Upload the last edits before quitting (signed in only; bounded so an offline quit never hangs).
+      if (account?.status().state === 'signed-in') {
+        await Promise.race([sync?.syncNow('explicit').catch(() => undefined), new Promise((r) => setTimeout(r, 5_000))]);
+        await library?.idle();
+      }
       const unsaved = outcomes.filter((o) => !o.clean);
       if (unsaved.length > 0) proceed = await confirmDiscard(unsaved, 'Quit');
     } catch (error) {
@@ -480,6 +485,8 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.open, async (p: string) => {
     const doc = await library.open(p);
     library.unwatchAllExcept(doc.path); // single-document UI for now
+    // Switching documents: the previous one was just flushed by the renderer; upload it soon.
+    void sync?.syncNow('flush');
     return doc;
   });
   handle(IPC_CHANNELS.save, (p: string, content: string) => library.save(p, content));
@@ -514,7 +521,7 @@ function registerIpc(): void {
   handle(IPC_CHANNELS.accountDevices, () => accountCall(() => account.listDevices()));
   handle(IPC_CHANNELS.accountRevoke, (id: string) => accountCall(() => account.revokeDevice(id)));
   handle(IPC_CHANNELS.syncStatus, async () => sync.status());
-  handle(IPC_CHANNELS.syncNow, () => sync.syncNow());
+  handle(IPC_CHANNELS.syncNow, () => sync.syncNow('explicit'));
 
   ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown, result: unknown) => {
     try {
@@ -603,7 +610,7 @@ function buildMenu(): void {
         { id: 'sign-in', label: 'Sign In…', click: () => menuSignIn() },
         { id: 'sign-out', label: 'Sign Out', click: () => void account.signOut().catch(() => undefined) },
         { id: 'account', label: 'Account and Devices…', click: () => sendCommand('account') },
-        { id: 'sync-now', label: 'Sync Now', accelerator: 'CommandOrControl+Alt+S', click: () => void sync.syncNow() },
+        { id: 'sync-now', label: 'Sync Now', accelerator: 'CommandOrControl+Alt+S', click: () => void sync.syncNow('explicit') },
         { id: 'reset-sync', label: 'Reset Sync State for This Folder…', click: () => void confirmResetSync() },
         { type: 'separator' },
         { role: 'services' },
@@ -749,6 +756,8 @@ function createWindow(): BrowserWindow {
   if (process.platform === 'darwin') win.setWindowButtonVisibility(!settings.get().focusMode);
   win.once('ready-to-show', () => (process.env.MARGIN_SHOW_INACTIVE ? win.showInactive() : win.show()));
   win.on('enter-full-screen', () => updateFullScreenLabel(true));
+  // Leaving the window (blur, hide, minimise): upload what was written (throttled per path to 30 s).
+  for (const event of ['blur', 'hide', 'minimize'] as const) win.on(event as 'blur', () => void sync?.syncNow('flush'));
   win.on('leave-full-screen', () => updateFullScreenLabel(false));
 
   // Closing the window flushes unsaved text first (quit has its own flush).

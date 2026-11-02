@@ -291,6 +291,13 @@ export interface SyncDeps {
   hash: (bytes: Uint8Array) => ContentHash;
   /** Passes per run: actions can create follow-up work (conflict copies, lost races). Default 4. */
   maxPasses?: number;
+  /**
+   * Upload throttle (see `UploadThrottle`): return false to hold an upload of this
+   * path for now. It's skipped this run (base untouched), reported in `held`.
+   */
+  allowUpload?: (path: string) => boolean;
+  /** Called after each successful upload (to feed the throttle). */
+  onUploaded?: (path: string) => void;
 }
 
 export interface SyncReport {
@@ -302,6 +309,8 @@ export interface SyncReport {
   conflicts: string[];
   /** Paths left for the next run (raced with an edit or another device). */
   deferred: string[];
+  /** Uploads held back by the throttle; they go in a later run. */
+  held: string[];
   /** Paths skipped because the server's view was older than ours (stale read or rollback). */
   stale: Array<{ path: string; reason: string }>;
   /** Paths the server refused (too large, invalid), with the reason. */
@@ -326,6 +335,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
     deferred: [],
     rejected: [],
     stale: [],
+    held: [],
     settled: false,
   };
   const { local, remote, base } = deps;
@@ -347,9 +357,11 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
       { detectMoves, remoteSeq: seq },
     );
     report.stale = planned.flatMap((a) => (a.type === 'stale' ? [{ path: a.path, reason: a.reason }] : []));
-    const actions = planned.filter((a) => a.type !== 'stale');
+    // Throttled uploads wait for a later run; nothing about them changes now.
+    report.held = planned.flatMap((a) => (a.type === 'upload' && deps.allowUpload && !deps.allowUpload(a.path) ? [a.path] : []));
+    const actions = planned.filter((a) => a.type !== 'stale' && !(a.type === 'upload' && report.held.includes(a.path)));
     if (actions.length === 0) {
-      report.settled = report.stale.length === 0;
+      report.settled = report.stale.length === 0 && report.held.length === 0;
       break;
     }
     report.deferred = [];
@@ -389,6 +401,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
           if (!file) throw new SyncPreconditionError('vanished locally');
           const entry = await remote.put(action.path, file.bytes, action.ifMatch);
           report.uploaded.push(action.path);
+          deps.onUploaded?.(action.path);
           return record(action.path, { hash: entry.hash, rev: entry.rev });
         }
         case 'stale':

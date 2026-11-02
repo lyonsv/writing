@@ -34,7 +34,7 @@ interface Device {
   net: { up: boolean };
 }
 
-async function device(name: string, serverUrl = server.url): Promise<Device> {
+async function device(name: string, serverUrl = server.url, opts: { now?: () => number } = {}): Promise<Device> {
   const dir = path.join(base, name);
   const root = path.join(dir, 'library');
   const trashDir = path.join(dir, 'trash');
@@ -60,6 +60,7 @@ async function device(name: string, serverUrl = server.url): Promise<Device> {
     library: () => library,
     account,
     stateDir: path.join(dir, 'sync'),
+    now: opts.now,
     trash: async (abs) => {
       trashed.push(path.relative(root, abs));
       renameSync(abs, path.join(trashDir, `${trashed.length}-${path.basename(abs)}`));
@@ -299,6 +300,38 @@ describe('two desktop clients against the local server', () => {
     const b = await device('B');
     await converge(a, b);
     expect(Object.values(snapshot(b))).toEqual(expect.arrayContaining(['v2', 'written after the backup']));
+  });
+
+  it('throttles uploads per document: scheduled ≥ 60 s, flush ≥ 30 s, explicit always (ADR 0021 commit budget)', async () => {
+    let t = 1_000_000;
+    const a = await device('A', server.url, { now: () => t });
+    const b = await device('B');
+    const remoteText = async () => {
+      await b.sync.syncNow('explicit');
+      return read(b, 'doc.md');
+    };
+    write(a, 'doc.md', 'v1');
+    await a.sync.syncNow('scheduled'); // first upload of a path always goes
+    expect(await remoteText()).toBe('v1');
+
+    write(a, 'doc.md', 'v2'); // the writer paused: a change nudge
+    await a.sync.syncNow('scheduled');
+    expect(a.sync.lastReport?.held).toEqual(['doc.md']);
+    expect(await remoteText()).toBe('v1');
+    await a.sync.syncNow('flush'); // window blur right away: still within 30 s
+    expect(await remoteText()).toBe('v1');
+
+    t += 30_000;
+    await a.sync.syncNow('flush'); // blur 30 s later: goes
+    expect(await remoteText()).toBe('v2');
+
+    write(a, 'doc.md', 'v3');
+    await a.sync.syncNow('scheduled');
+    expect(await remoteText()).toBe('v2');
+    await a.sync.syncNow('explicit'); // Sync Now or quit: always
+    expect(await remoteText()).toBe('v3');
+    // Nothing is lost while held: the local file kept every edit, and the base only moved on upload.
+    expect(read(a, 'doc.md')).toBe('v3');
   });
 
   it('keeps going past documents the server refuses, and reports them', async () => {

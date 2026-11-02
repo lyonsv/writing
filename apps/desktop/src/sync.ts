@@ -6,12 +6,15 @@ import {
   HttpSyncRemote,
   foldPathCase,
   isSyncablePath,
+  UploadThrottle,
   runSync,
+  strongerTrigger,
   type BaseEntry,
   type LocalFile,
   type SyncLocal,
   type SyncReport,
   type SyncStatus,
+  type UploadTrigger,
 } from '@margin/core';
 
 import { AccountError, type AccountManager } from './account';
@@ -42,6 +45,8 @@ export interface SyncServiceOptions {
   onStatus?: (status: SyncStatus) => void;
   intervalMs?: number;
   debounceMs?: number;
+  /** Clock for the upload throttle (tests). */
+  now?: () => number;
 }
 
 interface StateFile {
@@ -159,13 +164,20 @@ export class SyncService {
   private statusValue: SyncStatus = { state: 'off' };
   private running: Promise<void> | null = null;
   private again = false;
+  /** Trigger of the next run: queued requests merge to the strongest. */
+  private pendingTrigger: UploadTrigger = 'scheduled';
+  /** Per-path upload throttle (ADR 0021 amendments): keeps commits within GitHub's limits. */
+  private readonly throttle: UploadThrottle;
+  private heldTimer: NodeJS.Timeout | undefined;
   private timer: NodeJS.Timeout | undefined;
   private debounce: NodeJS.Timeout | undefined;
   private stopped = false;
   /** Last report (tests and diagnostics). */
   lastReport: SyncReport | null = null;
 
-  constructor(private readonly options: SyncServiceOptions) {}
+  constructor(private readonly options: SyncServiceOptions) {
+    this.throttle = new UploadThrottle(options.now ?? Date.now);
+  }
 
   status(): SyncStatus {
     return this.statusValue;
@@ -180,7 +192,7 @@ export class SyncService {
   start(): void {
     this.stopped = false;
     clearInterval(this.timer);
-    this.timer = setInterval(() => void this.syncNow(), this.options.intervalMs ?? 30_000);
+    this.timer = setInterval(() => void this.syncNow('scheduled'), this.options.intervalMs ?? 30_000);
     this.timer.unref?.();
     this.accountChanged();
   }
@@ -189,11 +201,12 @@ export class SyncService {
     this.stopped = true;
     clearInterval(this.timer);
     clearTimeout(this.debounce);
+    clearTimeout(this.heldTimer);
   }
 
   /** Called when the account status changes (sign in / out / revoked). */
   accountChanged(): void {
-    if (this.options.account.status().state === 'signed-in') void this.syncNow();
+    if (this.options.account.status().state === 'signed-in') void this.syncNow('scheduled');
     else if (!this.running) this.setStatus({ state: 'off' });
   }
 
@@ -201,13 +214,20 @@ export class SyncService {
   nudge(): void {
     if (this.stopped || this.options.account.status().state !== 'signed-in') return;
     clearTimeout(this.debounce);
-    this.debounce = setTimeout(() => void this.syncNow(), this.options.debounceMs ?? 3_000);
+    this.debounce = setTimeout(() => void this.syncNow('scheduled'), this.options.debounceMs ?? 3_000);
     this.debounce.unref?.();
   }
 
-  /** Runs now (or right after the current run). Resolves when that run is done. */
-  async syncNow(): Promise<SyncStatus> {
+  /**
+   * Runs now (or right after the current run). Resolves when that run is done.
+   * `trigger` sets how strictly uploads are throttled (`UploadThrottle`):
+   * `scheduled` for the timer and change nudges, `flush` for window blur/hide
+   * and document switches, `explicit` (the default: a direct call is "Sync Now")
+   * for Sync Now and quit.
+   */
+  async syncNow(trigger: UploadTrigger = 'explicit'): Promise<SyncStatus> {
     if (this.stopped) return this.statusValue;
+    this.pendingTrigger = strongerTrigger(this.pendingTrigger, trigger);
     if (this.running) {
       this.again = true;
       await this.running;
@@ -217,7 +237,9 @@ export class SyncService {
     this.running = (async () => {
       do {
         this.again = false;
-        await this.runOnce();
+        const runTrigger = this.pendingTrigger;
+        this.pendingTrigger = 'scheduled';
+        await this.runOnce(runTrigger);
       } while (this.again && !this.stopped);
     })().finally(() => {
       this.running = null;
@@ -266,7 +288,7 @@ export class SyncService {
     await fs.rename(tmp, file);
   }
 
-  private async runOnce(): Promise<void> {
+  private async runOnce(trigger: UploadTrigger = 'scheduled'): Promise<void> {
     const account = this.options.account.status();
     if (account.state !== 'signed-in') return this.setStatus({ state: 'off' });
     const previous = this.statusValue;
@@ -289,9 +311,17 @@ export class SyncService {
         base,
         saveBase: persist,
         hash: sha256,
+        allowUpload: (p) => this.throttle.allows(p, trigger),
+        onUploaded: (p) => this.throttle.uploaded(p),
       });
       await persist();
       this.lastReport = report;
+      // Held uploads go as soon as the throttle allows (at most a minute later).
+      clearTimeout(this.heldTimer);
+      if (report.held.length && !this.stopped) {
+        this.heldTimer = setTimeout(() => void this.syncNow('scheduled'), this.throttle.dueIn(report.held) + 50);
+        this.heldTimer.unref?.();
+      }
       if (report.stale.length) {
         // The server's data is older than what this device already synced (rollback or a
         // stale replica). Nothing was changed for those paths; make it visible.

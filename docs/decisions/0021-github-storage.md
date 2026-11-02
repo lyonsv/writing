@@ -91,3 +91,21 @@ Every write is a commit, so the short-lived sign-in values no longer get a file 
   - Branch names are now canonicalised for both `GITHUB_STORE_BRANCH` and `PRODUCTION_GITHUB_STORE`: a leading `refs/heads/` or `heads/` is stripped, and only `[A-Za-z0-9._-]` is allowed, with no leading or trailing `.` and no `..` (so no slashes; refused otherwise). The store writes to the canonical name.
   - Outside production, **any branch equal to the production branch (case-insensitively) is refused, whatever repo is configured**. Repo names can alias through renames and redirects, so the branch alone decides. Every listed bypass is a unit test.
   - *Option, not needed now:* a separate preview repository with its own PAT would isolate previews completely, even from a misconfigured token.
+- **Commit budget: per-document upload throttle (validator, MAJOR).** The desktop's change nudge fired after every 3 s pause, so a writer pausing every 10 s produced ~360 uploads, i.e. **~720 commits per hour**, past GitHub's ~500/hour secondary limit (which applies to the server's one token, i.e. to all devices together). The fix is shared core code, `UploadThrottle` in `@margin/core` (`packages/core/src/uploadThrottle.ts`), applied through `runSync`'s `allowUpload`/`onUploaded`, with this policy per path:
+
+  | Trigger | Examples | Minimum gap |
+  |---|---|---|
+  | `scheduled` | timer, change nudges | 60 s |
+  | `flush` | window blur, hide or minimise, switching documents | 30 s |
+  | `explicit` | Sync Now, quit (bounded to 5 s) | none |
+
+  A held upload changes nothing (its base stays put, the text is safe on disk) and is retried automatically when due.
+
+  The flush floor is my addition to the brief: without it, rapid window switching would be unbounded. The desktop uses this now; web and iOS adopt the same helper.
+
+  **Recomputed budget, per device:**
+  - **Typical (writing one document, pausing often, no window switching):** ≤ 60 uploads/h → **≤ 120 commits/h** + 1/h device touch.
+  - **Worst case (one document, switching away at least every 30 s):** ≤ 120 uploads/h → **≤ 240 commits/h**.
+  - Editing *several* documents concurrently multiplies that per document, but a person edits one at a time, and a switch flushes the previous one.
+  - **Server-wide:** two devices both at the worst case reach ~480 commits/h, just under the limit; typical use is ~240. Beyond the limit, GitHub's 403/429 become **503 + `Retry-After`** and clients back off (see the next amendment). Nothing is lost: edits wait on disk.
+  - Read calls stay ~0 when idle (304s).
