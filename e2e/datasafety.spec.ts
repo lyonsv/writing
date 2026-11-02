@@ -180,3 +180,29 @@ test('a failing save shows "Not saved", retries, and recovers', async () => {
   await expect(page.getByTestId('save-status')).toHaveCount(0, { timeout: 5_000 });
   await quitAndWait(app);
 });
+
+test('filesystems without hard links (exFAT, SMB): create, save and conflict copies still work', async () => {
+  // hdiutil can't create a real exFAT volume in CI sandboxes, so main is told
+  // to fail link() with ENOTSUP, exactly as exFAT does.
+  const lib = newLibrary();
+  const file = path.join(lib, 'Untitled.md');
+  const app = await launch(lib, { MARGIN_TEST_NO_HARDLINKS: '1' });
+  const page = await app.firstWindow();
+  await expect(page.locator('.cm-content')).toBeVisible();
+  await expect.poll(() => read(file)).toBe('');
+  await page.locator('.cm-content').click();
+  await page.keyboard.type('first');
+  await expect.poll(() => read(file)).toBe('first');
+  writeFileSync(file, 'theirs');
+  await expect(page.locator('.cm-content')).toContainText('theirs');
+  await page.keyboard.press('Meta+ArrowDown');
+  await page.keyboard.type(' ours');
+  writeFileSync(file, 'theirs again'); // inside the debounce: conflict
+  await expect(page.getByTestId('save-status')).toContainText('Changed elsewhere', { timeout: 10_000 });
+  await quitAndWait(app);
+  expect(read(file)).toBe('theirs again');
+  const copies = readdirSync(lib).filter((f) => f.includes('(conflict '));
+  expect(copies).toHaveLength(1);
+  expect(read(path.join(lib, copies[0]!))).toBe('theirs ours');
+  expect(readdirSync(lib).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+});

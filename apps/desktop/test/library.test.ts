@@ -177,3 +177,35 @@ describe('FileSystemLibrary save pipeline', () => {
     expect(existsSync(path.join(root, 'f3'))).toBe(true);
   });
 });
+
+describe('FileSystemLibrary without hard links (exFAT, network shares)', () => {
+  const noLink = (errno: string) => async () =>
+    Promise.reject(Object.assign(new Error(`link: ${errno}`), { code: errno }));
+
+  it.each(['EPERM', 'ENOTSUP', 'EXDEV'])('creates, conflicts and renames without link() (%s)', async (errno) => {
+    const l = new FileSystemLibrary(root, { link: noLink(errno), now: () => new Date(2026, 10, 2, 9, 0) });
+    await l.init();
+    expect(await l.open('new.md')).toEqual({ path: 'new.md', content: '' });
+    await l.save('new.md', 'mine');
+    writeFileSync(path.join(root, 'new.md'), 'theirs');
+    expect(await l.save('new.md', 'mine 2')).toMatchObject({ status: 'conflict' });
+    expect(readFileSync(path.join(root, 'new (conflict 2026-11-02 0900).md'), 'utf8')).toBe('mine 2');
+    expect(readFileSync(path.join(root, 'new.md'), 'utf8')).toBe('theirs');
+
+    await l.write('a.md', 'A');
+    await l.write('b.md', 'B');
+    await expect(l.rename('a.md', 'b.md')).rejects.toMatchObject({ code: 'exists' });
+    expect(readFileSync(path.join(root, 'b.md'), 'utf8')).toBe('B');
+    await l.rename('a.md', 'c.md');
+    expect(readFileSync(path.join(root, 'c.md'), 'utf8')).toBe('A');
+    expect(existsSync(path.join(root, 'a.md'))).toBe(false);
+    expect(readdirSync(root).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    l.dispose();
+  });
+
+  it('propagates unrelated link() errors', async () => {
+    const l = new FileSystemLibrary(root, { link: noLink('EIO') });
+    await l.init();
+    await expect(l.open('x.md')).rejects.toMatchObject({ code: 'EIO' });
+  });
+});

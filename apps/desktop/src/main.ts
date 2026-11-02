@@ -25,6 +25,7 @@ import { APP_ORIGIN, handleAppScheme, registerAppScheme } from './protocol';
  *   MARGIN_USER_DATA_DIR   Electron userData folder (isolates test runs)
  *   MARGIN_WEB_DIR         Expo web export folder (default: packaged resources or ../app/dist)
  *   MARGIN_SHOW_INACTIVE   show the window without taking OS focus (automated tests)
+ *   MARGIN_TEST_NO_HARDLINKS  simulate a filesystem without hard links (tests)
  */
 const DEV_SERVER_URL = process.env.MARGIN_DEV_SERVER_URL;
 /** How long to wait for a renderer to flush before closing anyway (it may be hung). */
@@ -37,7 +38,13 @@ if (process.env.MARGIN_USER_DATA_DIR) {
 registerAppScheme();
 
 const libraryDir = path.resolve(process.env.MARGIN_LIBRARY_DIR ?? path.join(app.getPath('documents'), 'Margin'));
-const library = new FileSystemLibrary(libraryDir, { onExternalChange: broadcastExternalChange });
+const library = new FileSystemLibrary(libraryDir, {
+  onExternalChange: broadcastExternalChange,
+  // Test hook: behave like a filesystem without hard links (exFAT, SMB).
+  ...(process.env.MARGIN_TEST_NO_HARDLINKS
+    ? { link: async () => Promise.reject(Object.assign(new Error('link disabled'), { code: 'ENOTSUP' })) }
+    : {}),
+});
 
 let settings: SettingsFile;
 

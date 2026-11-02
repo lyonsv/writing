@@ -92,8 +92,39 @@ async function writeTemp(target: string, content: string): Promise<string> {
   return tmp;
 }
 
+/** errno codes meaning "this filesystem can't hard-link" (exFAT, FAT, SMB/NFS shares…). */
+const NO_HARDLINK_CODES = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV', 'EMLINK']);
+
+/**
+ * Moves `src` to `dst` without ever replacing an existing `dst`.
+ * Preferred: `link()` (fails atomically with EEXIST) then unlink `src`.
+ * Fallback for filesystems without hard links: claim `dst` exclusively with an
+ * `O_EXCL` create, then `rename()` over our own empty placeholder.
+ */
+async function moveNoReplace(src: string, dst: string, link: LinkFn): Promise<void> {
+  try {
+    await link(src, dst);
+    await fs.unlink(src);
+    return;
+  } catch (error) {
+    if (!NO_HARDLINK_CODES.has(code(error) ?? '')) throw error;
+  }
+  const claim = await fs.open(dst, 'wx'); // EEXIST if anything is there
+  await claim.close();
+  try {
+    await fs.rename(src, dst);
+  } catch (error) {
+    await fs.rm(dst, { force: true });
+    throw error;
+  }
+}
+
+export type LinkFn = (existingPath: string, newPath: string) => Promise<void>;
+
 export interface LibraryOptions {
   now?: () => Date;
+  /** Hard-link implementation; injectable so tests can simulate exFAT/network shares. */
+  link?: LinkFn;
   /** Called when a watched document changes on disk without us writing it. */
   onExternalChange?: (change: ExternalChange) => void;
 }
@@ -135,6 +166,10 @@ export class FileSystemLibrary implements DocumentStore {
     private readonly options: LibraryOptions = {},
   ) {
     this.root = path.resolve(root);
+  }
+
+  private get link(): LinkFn {
+    return this.options.link ?? ((a, b) => fs.link(a, b));
   }
 
   async init(): Promise<void> {
@@ -285,14 +320,13 @@ export class FileSystemLibrary implements DocumentStore {
           }
         } else {
           this.assertDocumentPath(dstKey);
-          // link() fails atomically with EEXIST, so an existing file is never replaced.
+          // Never replaces an existing file (link(), or O_EXCL claim + rename fallback).
           try {
-            await fs.link(src, dst);
+            await moveNoReplace(src, dst, this.link);
           } catch (error) {
             if (code(error) === 'EEXIST') throw new DocumentStoreError('exists', `${to} already exists`);
             throw error;
           }
-          await fs.unlink(src);
           const v = this.known.get(srcKey);
           this.known.delete(srcKey);
           if (v) this.known.set(dstKey, v);
@@ -456,7 +490,7 @@ export class FileSystemLibrary implements DocumentStore {
     await fs.mkdir(path.dirname(file), { recursive: true });
     const tmp = await writeTemp(file, content);
     try {
-      await fs.link(tmp, file);
+      await moveNoReplace(tmp, file, this.link);
     } catch (error) {
       if (code(error) === 'EEXIST') throw new DocumentStoreError('exists', `${file} already exists`);
       throw error;
