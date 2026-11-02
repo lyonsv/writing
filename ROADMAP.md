@@ -32,10 +32,12 @@ Nothing server-side ships without this. ADRs 0010 (model), 0011 (native redirect
 - [ ] Owner: create the GitHub OAuth Apps and set env vars (`docs/server-setup.md`)
 
 ## M5 — Sync server & desktop sync
-- [ ] Sync API on Vercel Functions, auth required on every route (from M4: add routes to `apps/server/src/app.ts`; `requireAuth` already covers them; keep blob keys out of `auth/`)
-- [ ] Vercel Blob **private** store; one file per document, ETag-based writes
-- [ ] Desktop sync client; conflicts keep both copies (`name (conflict YYYY-MM-DD).md`)
-- [ ] Preview deploys on Vercel; secrets only in Vercel env vars
+ADR 0013. Built and tested locally only (no deploy).
+- [x] Sync API on Vercel Functions behind the M4 gate: manifest, get, put (If-Match / If-None-Match: *), delete (tombstone), atomic move; 412/428/409/413; same path rules as core (NFC, `.md`, no dotfiles, byte limits); documents over 4 MiB refused
+- [x] Vercel Blob **private** store: one manifest updated by ETag compare-and-swap + content-addressed document bodies (deviation from "one object per document path", see ADR 0013)
+- [x] Sync engine in `packages/core` (three-way, edit beats delete, renames as moves), randomised two-device tests for convergence and no data loss
+- [x] Desktop sync client; conflicts keep both copies (`name (conflict YYYY-MM-DD HHMM).md`); downloads through the save pipeline's queue and conflict logic; base per library folder and account; status line; Sync Now
+- [ ] Preview deploys on Vercel; secrets only in Vercel env vars → with the M8 deploy
 
 ## M6 — iOS (Expo)
 - [ ] iOS app sharing UI + core packages; develop with Expo Go / dev build
@@ -60,7 +62,8 @@ Goal: Margin installed and authenticated on the owner's Mac and iPhone, with a r
 - [ ] iOS: **EAS Build → TestFlight** (recommended; needs Apple Developer Program, $99/yr) for a real app with home-screen icon; **EAS Update** for over-the-air JS updates without rebuilding
 - [ ] Fallback if no Apple Developer account: install the hosted web build as a home-screen PWA (icon on phone, sign-in required, works via Safari)
 - [ ] Hosted web build behind sign-in: serve the static export only through `requireAuth` (cookie session from M4) and add a browser sign-in screen (ADR 0010)
-- [ ] Confirm on first deploy: GitHub accepts PKCE for the OAuth App; Vercel detects the Hono entry in `apps/server`; Blob conditional writes behave as ADR 0012 assumes
+- [ ] Confirm on first deploy: GitHub accepts PKCE for the OAuth App; Vercel detects the Hono entry in `apps/server`; Blob conditional writes behave as ADRs 0012/0013 assume (manifest CAS)
+- [ ] Sync maintenance: garbage-collect unreferenced `sync/objects/*` (ADR 0013); backup = export manifest paths → objects
 - [ ] Not planned: public App Store listing (review overhead isn't needed for personal use; can be added later from the same EAS pipeline)
 - [ ] Verify end-to-end: write on Mac → appears on iPhone and vice versa; revoked device loses access
 - [ ] Backups: periodic export of the Blob store (e.g. scheduled GitHub Action or Vercel cron to a private archive)

@@ -293,6 +293,7 @@ export class SyncService {
       const notes: string[] = [];
       if (report.rejected.length) notes.push(`${report.rejected.length} document(s) not synced (${report.rejected[0]!.reason})`);
       if (report.conflicts.length) notes.push(`${report.conflicts.length} conflict copy(s) created`);
+      if (!report.settled && report.deferred.length) notes.push(`${report.deferred.length} item(s) waiting (e.g. a name that differs only in case)`);
       this.setStatus({ state: 'idle', lastSyncedAt: new Date().toISOString(), ...(notes.length ? { message: notes.join('; ') } : {}) });
     } catch (error) {
       await persist().catch(() => undefined);

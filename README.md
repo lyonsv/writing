@@ -17,6 +17,6 @@ pnpm build:desktop && pnpm test:e2e
 pnpm dev:server      # local auth server (needs apps/server/.env.local, see docs/server-setup.md)
 ```
 
-Signing in is optional: Margin works fully offline and signed out. The server (Margin › Sign In…) only exists for sync (coming in M5); setting one up is described in [docs/server-setup.md](docs/server-setup.md).
+Signing in is optional: Margin works fully offline and signed out. Signed in (Margin › Sign In…), the documents folder syncs with your own server; edits made on two devices at once are both kept (a conflict copy). Setting up a server is described in [docs/server-setup.md](docs/server-setup.md).
 
 Documents are saved as plain `.md` files in `~/Documents/Margin`.
