@@ -2,9 +2,9 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileS
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FileSystemLibrary, OutsideRootError } from '../src/library';
+import { DisallowedPathError, FileSystemLibrary, OutsideRootError } from '../src/library';
 
 let base: string;
 let root: string;
@@ -77,5 +77,103 @@ describe('FileSystemLibrary', () => {
     await expect(lib.read('escape/secret.md')).rejects.toBeInstanceOf(OutsideRootError);
     await expect(lib.write('escape/new.md', 'x')).rejects.toBeInstanceOf(OutsideRootError);
     expect(existsSync(path.join(base, 'new.md'))).toBe(false);
+  });
+});
+
+describe('FileSystemLibrary save pipeline', () => {
+  const when = new Date(2026, 10, 2, 14, 30);
+
+  it('later writes win even when an earlier, larger write is still in flight', async () => {
+    for (let i = 0; i < 5; i++) {
+      await Promise.all([lib.write('race.md', 'OLD'.repeat(3_000_000)), lib.write('race.md', 'NEW')]);
+      expect(readFileSync(path.join(root, 'race.md'), 'utf8')).toBe('NEW');
+    }
+  });
+
+  it('coalesces queued writes and reports superseded ones', async () => {
+    const results = await Promise.all([lib.save('a.md', '1'), lib.save('a.md', '2'), lib.save('a.md', '3')]);
+    expect(results.map((r) => r.status)).toEqual(['superseded', 'superseded', 'saved']);
+    expect(readFileSync(path.join(root, 'a.md'), 'utf8')).toBe('3');
+  });
+
+  it('only writes .md files and refuses hidden paths', async () => {
+    for (const p of ['evil.sh', '.hidden', '.hidden.md', 'notes/.git/config.md', 'noext']) {
+      await expect(lib.write(p, 'x'), p).rejects.toBeInstanceOf(DisallowedPathError);
+    }
+    await expect(lib.createFolder('.secret')).rejects.toBeInstanceOf(DisallowedPathError);
+    await lib.write('a.md', 'x');
+    await expect(lib.rename('a.md', 'a.sh')).rejects.toBeInstanceOf(DisallowedPathError);
+    expect(readdirSync(root)).toEqual(['a.md']);
+  });
+
+  it('open creates a missing document exclusively and never truncates an existing one', async () => {
+    expect(await lib.open('new.md')).toEqual({ path: 'new.md', content: '' });
+    writeFileSync(path.join(root, 'existing.md'), 'keep me');
+    expect(await lib.open('existing.md')).toEqual({ path: 'existing.md', content: 'keep me' });
+    expect(readFileSync(path.join(root, 'existing.md'), 'utf8')).toBe('keep me');
+  });
+
+  it('never clobbers an external edit: our text goes to a conflict copy', async () => {
+    const conflicted = new FileSystemLibrary(root, { now: () => when });
+    await conflicted.init();
+    writeFileSync(path.join(root, 'doc.md'), 'v1');
+    await conflicted.open('doc.md');
+    await conflicted.save('doc.md', 'v1 + ours');
+    writeFileSync(path.join(root, 'doc.md'), 'v1 + ours + theirs');
+
+    const result = await conflicted.save('doc.md', 'v1 + ours + more');
+    expect(result).toEqual({ status: 'conflict', path: 'doc.md', conflictPath: 'doc (conflict 2026-11-02 1430).md' });
+    expect(readFileSync(path.join(root, 'doc.md'), 'utf8')).toBe('v1 + ours + theirs');
+    expect(readFileSync(path.join(root, 'doc (conflict 2026-11-02 1430).md'), 'utf8')).toBe('v1 + ours + more');
+
+    // A straggling save to the original goes to the same copy, not a new one.
+    await conflicted.save('doc.md', 'v1 + ours + more + more');
+    expect(readFileSync(path.join(root, 'doc (conflict 2026-11-02 1430).md'), 'utf8')).toBe('v1 + ours + more + more');
+    expect(readdirSync(root).filter((f) => f.includes('conflict'))).toHaveLength(1);
+
+    // A second, independent conflict gets a numbered copy.
+    await conflicted.open('doc.md');
+    writeFileSync(path.join(root, 'doc.md'), 'theirs again');
+    const second = await conflicted.save('doc.md', 'ours again');
+    expect(second).toMatchObject({ conflictPath: 'doc (conflict 2026-11-02 1430 2).md' });
+  });
+
+  it('acknowledged external content becomes the new base', async () => {
+    writeFileSync(path.join(root, 'doc.md'), 'v1');
+    await lib.open('doc.md');
+    writeFileSync(path.join(root, 'doc.md'), 'v2 external');
+    const { createHash } = await import('node:crypto');
+    const token = createHash('sha256').update('v2 external').digest('hex');
+    expect(await lib.acknowledgeExternal('doc.md', 'stale-token')).toBe(false);
+    expect(await lib.acknowledgeExternal('doc.md', token)).toBe(true);
+    expect(await lib.save('doc.md', 'v2 external + local')).toEqual({ status: 'saved', path: 'doc.md' });
+  });
+
+  it('reports external changes to the open document, but not its own writes', async () => {
+    const changes: string[] = [];
+    const watched = new FileSystemLibrary(root, { onExternalChange: (c) => changes.push(c.content) });
+    await watched.init();
+    writeFileSync(path.join(root, 'w.md'), 'v1');
+    await watched.open('w.md');
+    await watched.save('w.md', 'ours');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(changes).toEqual([]);
+    writeFileSync(path.join(root, 'w.md'), 'theirs');
+    await vi.waitFor(() => expect(changes).toEqual(['theirs']), { timeout: 3000 });
+    watched.dispose();
+  });
+
+  it('rename never replaces an existing destination', async () => {
+    await lib.write('a.md', 'A');
+    await lib.write('b.md', 'B');
+    await expect(lib.rename('a.md', 'b.md')).rejects.toMatchObject({ code: 'exists' });
+    expect(readFileSync(path.join(root, 'b.md'), 'utf8')).toBe('B');
+    await lib.createFolder('f1');
+    await lib.createFolder('f2');
+    await lib.write('f2/x.md', 'x');
+    await expect(lib.rename('f1', 'f2')).rejects.toMatchObject({ code: 'exists' });
+    expect(readFileSync(path.join(root, 'f2/x.md'), 'utf8')).toBe('x');
+    await lib.rename('f1', 'f3');
+    expect(existsSync(path.join(root, 'f3'))).toBe(true);
   });
 });
