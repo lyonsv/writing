@@ -14,6 +14,9 @@ pnpm install
 pnpm dev:desktop     # Electron + Expo web dev server
 pnpm typecheck && pnpm test
 pnpm build:desktop && pnpm test:e2e
+pnpm dev:server      # local auth server (needs apps/server/.env.local, see docs/server-setup.md)
 ```
+
+Signing in is optional: Margin works fully offline and signed out. The server (Margin › Sign In…) only exists for sync (coming in M5); setting one up is described in [docs/server-setup.md](docs/server-setup.md).
 
 Documents are saved as plain `.md` files in `~/Documents/Margin`.

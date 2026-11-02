@@ -12,4 +12,7 @@ One file per decision: `NNNN-title.md` with **Status**, **Context**, **Decision*
 | [0006](0006-save-pipeline.md) | Save pipeline: durability, write queue, external changes and conflicts | Accepted |
 | [0007](0007-focus-mode.md) | Focus mode: dimming, typewriter scrolling, settings | Accepted |
 | [0008](0008-library-model.md) | Library model: folder tree, operations, watching, first document | Accepted |
-| [0009](0009-library-ui.md) | Library UI: sidebar, quick open, shortcuts | Accepted |
+| [0009](0009-library-ui.md) | Library UI: sidebar, quick open, shortcuts (amended: keyboard navigation, byte-length names) | Accepted |
+| [0010](0010-auth-model.md) | Authentication model: GitHub sign-in, allowlist on login+id, device tokens, one auth gate, Hono | Accepted |
+| [0011](0011-native-redirect.md) | Native sign-in: loopback redirect on desktop, `margin://` on iOS | Accepted |
+| [0012](0012-token-storage.md) | Token storage: hashed device records in private Vercel Blob; `safeStorage` on desktop | Accepted |
