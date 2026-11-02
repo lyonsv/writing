@@ -75,13 +75,30 @@ export class WebAccount implements AccountBackend {
     return () => void this.listeners.delete(listener);
   }
 
+  private leaving = false;
+
+  /**
+   * Any 401 (revoked, expired, de-allowlisted): signed out, exactly like Sign Out
+   * (validator M8): the cached app shell is dropped and the page goes to the
+   * sign-in page. The documents in this browser's IndexedDB are kept; they are
+   * the user's, and they sync again after signing back in (ADR 0020).
+   */
+  private async sessionLost(reason: string): Promise<void> {
+    this.signedOut = true;
+    this.error = reason;
+    this.remember(null);
+    if (this.leaving) return;
+    this.leaving = true;
+    await this.deps.onSignedOut?.().catch(() => undefined);
+    this.deps.navigate('/');
+  }
+
   /** Asks the server who we are. Offline: keeps the last known answer. */
   async status(): Promise<AccountStatus> {
     try {
       const res = await this.deps.fetch('/api/me', { credentials: 'same-origin', redirect: 'error', cache: 'no-store' });
       if (res.status === 401) {
-        this.signedOut = true;
-        this.remember(null);
+        await this.sessionLost('This browser was signed out (revoked or expired).');
       } else if (res.ok) {
         const me = (await res.json()) as { login: string; device: { id: string } };
         this.signedOut = false;
@@ -158,9 +175,7 @@ export class WebAccount implements AccountBackend {
       clearTimeout(timer);
     }
     if (res.status === 401) {
-      this.signedOut = true;
-      this.error = 'This browser was signed out (revoked or expired).';
-      this.remember(null);
+      await this.sessionLost('This browser was signed out (revoked or expired).');
       throw new AccountError(this.error);
     }
     return res as SyncHttpResponse & Response;

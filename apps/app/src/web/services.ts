@@ -80,7 +80,11 @@ export function webServices(): WebServices {
         origin: location.origin,
         storage: window.localStorage,
         navigate: (url) => location.assign(url),
-        onSignedOut: clearShellCaches,
+        // Save what was typed first (into IndexedDB; documents are kept), then drop the cached shell.
+        onSignedOut: async () => {
+          await flushWorkspace().catch(() => false);
+          await clearShellCaches();
+        },
       })
     : null;
   const sync = account

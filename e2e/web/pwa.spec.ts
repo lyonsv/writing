@@ -193,3 +193,24 @@ test('two tabs: an edit in one reaches the other (BroadcastChannel), and saves a
   expect(Object.keys(await serverDocs(page)).filter((p) => p.includes('(conflict'))).toEqual([]);
   await second.close();
 });
+
+test('a revoked browser: next check routes to sign-in and the cached shell no longer opens offline; documents stay', async ({ page, context }) => {
+  await signIn(page);
+  await page.waitForFunction(() => navigator.serviceWorker?.controller != null, undefined, { timeout: 10_000 }).catch(() => undefined);
+  await page.reload();
+  await expect(page.getByTestId('editor')).toBeVisible({ timeout: 20_000 });
+  await typeAtEnd(page, '\nkept after revoke');
+  await page.waitForTimeout(1200);
+  // Revoke this browser's device from "another device" (here: the API with this session).
+  const me = (await (await page.request.get(`${server.url}/api/me`)).json()) as { device: { id: string } };
+  expect((await page.request.delete(`${server.url}/api/devices/${me.device.id}`, { headers: { Origin: server.url } })).status()).toBe(204);
+  await syncNow(page); // the app checks its session when it becomes visible
+  await expect(page.locator('#margin-signin')).toBeVisible({ timeout: 20_000 });
+  await context.setOffline(true);
+  await page.reload().catch(() => undefined);
+  await expect(page.getByTestId('editor')).toHaveCount(0);
+  await context.setOffline(false);
+  // Sign back in: the documents written before the revoke are still in this browser.
+  await signIn(page);
+  await expect.poll(() => editorText(page), { timeout: 15_000 }).toContain('kept after revoke');
+});
