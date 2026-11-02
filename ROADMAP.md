@@ -13,9 +13,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 - [x] Fullscreen
 
 ## M2 — Focus mode
-- [ ] Sentence / paragraph focus dimming
-- [ ] Typewriter scrolling
-- [ ] Hide all chrome; toggle via shortcut
+- [x] Sentence / paragraph focus dimming
+- [x] Typewriter scrolling
+- [x] Hide all chrome; toggle via shortcut
 
 ## M3 — Local document library
 - [ ] Local markdown store with folders (create / rename / move / delete)

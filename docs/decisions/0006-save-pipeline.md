@@ -49,3 +49,9 @@ A writing app must never lose or silently overwrite prose. The M1 shell saved th
 - Reloading on an external change replaces the whole document. Undo history includes the reload as one step.
 - The protocol is single-window. Multiple windows on the same document would need per-window known versions; that is deferred to M3.
 - Browser (localStorage) and the native stub have a single writer and no external-change source, so they only use `SaveScheduler`.
+
+## Amendments (2026-11-02, after M1 re-validation)
+- **Unsaved text on quit or close:** the renderer's flush reply now says whether everything reached disk, along with the unsaved text. If not, a warning dialog offers **Cancel** (the default and cancel button), **Save a Copy…** (exclusive create at a path the user picks) and **Quit/Close Anyway**.
+- **Hung renderers:** the flush timeout is now **5 s**. On timeout the window is `destroy()`ed rather than closed, because closing waits for unload handlers that a hung page never runs. Quit used to take about 150 s in that case.
+- **Line endings and encoding:** files keep their dominant line ending (`detectLineEnding`/`withLineEnding` in core) and any UTF-8 BOM. Files that aren't valid UTF-8 open read-only with a persistent notice, and the main process rejects saves to them. An external change to non-UTF-8 bytes isn't offered to the editor; a later save then goes to a conflict copy.
+- **No hard links (exFAT, FAT, SMB/NFS):** when `link()` fails with EPERM, ENOTSUP, EOPNOTSUPP, ENOSYS, EXDEV or EMLINK, exclusive create and no-replace rename claim the destination with `open(…, 'wx')` and `rename()` over that claim instead.
