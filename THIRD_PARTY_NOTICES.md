@@ -133,18 +133,13 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 |---|---|---|
 | jsc-safe-url | 0.2.4 | https://github.com/robhogan/jsc-safe-url#readme |
 
-### Apache-2.0 (11)
+### Apache-2.0 (6)
 
 | Package | Version | Homepage |
 |---|---|---|
-| @vercel/blob | 2.8.2 | https://vercel.com/storage/blob |
-| @vercel/cli-config | 0.3.1 | https://vercel.com/docs/projects/project-configuration/global-configuration |
-| @vercel/cli-exec | 1.0.1 | https://vercel.com |
-| @vercel/oidc | 3.8.10 | https://vercel.com |
 | baseline-browser-mapping | 2.11.34 | https://github.com/web-platform-dx/baseline-browser-mapping#readme |
 | detect-libc | 2.1.2 | https://github.com/lovell/detect-libc#readme |
 | exponential-backoff | 3.1.3 | https://github.com/coveooss/exponential-backoff#readme |
-| human-signals | 2.1.0 | https://git.io/JeluP |
 | typescript | 6.0.3 | https://www.typescriptlang.org/ |
 | walker | 1.0.8 | https://github.com/daaku/nodejs-walker |
 | xcode | 4.0.0 | https://github.com/apache/cordova-node-xcode#readme |
@@ -211,7 +206,7 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | yallist | 3.1.1 | https://github.com/isaacs/yallist#readme |
 | yargs-parser | 21.1.1 | https://github.com/yargs/yargs-parser#readme |
 
-### MIT (462)
+### MIT (446)
 
 | Package | Version | Homepage |
 |---|---|---|
@@ -401,7 +396,6 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | ansi-styles | 3.2.1, 4.3.0, 5.2.0 | https://github.com/chalk/ansi-styles#readme |
 | arg | 5.0.2 | https://github.com/vercel/arg#readme |
 | asap | 2.0.6 | https://github.com/kriskowal/asap#readme |
-| async-retry | 1.3.3 | https://github.com/vercel/async-retry#readme |
 | babel-plugin-polyfill-corejs2 | 0.4.17 | https://github.com/babel/babel-polyfills#readme |
 | babel-plugin-polyfill-corejs3 | 0.13.0 | https://github.com/babel/babel-polyfills#readme |
 | babel-plugin-polyfill-regenerator | 0.6.8 | https://github.com/babel/babel-polyfills#readme |
@@ -458,7 +452,6 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | escape-html | 1.0.3 | https://github.com/component/escape-html#readme |
 | escape-string-regexp | 1.0.5, 4.0.0 | https://github.com/sindresorhus/escape-string-regexp#readme |
 | etag | 1.8.1 | https://github.com/jshttp/etag#readme |
-| execa | 5.1.1 | https://github.com/sindresorhus/execa#readme |
 | expo | 58.0.22 | https://github.com/expo/expo/tree/main/packages/expo |
 | expo-asset | 58.0.19 | https://docs.expo.dev/versions/latest/sdk/asset/ |
 | expo-constants | 58.0.14 | https://docs.expo.dev/versions/latest/sdk/constants/ |
@@ -492,7 +485,6 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | fresh | 0.5.2 | https://github.com/jshttp/fresh#readme |
 | function-bind | 1.1.2 | https://github.com/Raynos/function-bind |
 | gensync | 1.0.0-beta.2 | https://github.com/loganfsmyth/gensync |
-| get-stream | 6.0.1 | https://github.com/sindresorhus/get-stream#readme |
 | getenv | 2.0.0 | https://github.com/ctavan/node-getenv |
 | has-flag | 3.0.0, 4.0.0 | https://github.com/sindresorhus/has-flag#readme |
 | hasown | 2.0.4 | https://github.com/inspect-js/hasOwn#readme |
@@ -506,20 +498,16 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | inline-style-prefixer | 7.0.1 | https://github.com/robinweser/inline-style-prefixer#readme |
 | invariant | 2.2.4 | https://github.com/zertosh/invariant#readme |
 | is-arrayish | 0.3.4 | https://github.com/qix-/node-is-arrayish#readme |
-| is-buffer | 2.0.5 | https://github.com/feross/is-buffer#readme |
 | is-core-module | 2.17.0 | https://github.com/inspect-js/is-core-module |
 | is-docker | 2.2.1 | https://github.com/sindresorhus/is-docker#readme |
 | is-fullwidth-code-point | 3.0.0 | https://github.com/sindresorhus/is-fullwidth-code-point#readme |
-| is-node-process | 1.2.0 | https://github.com/mswjs/is-node-process#readme |
 | is-number | 7.0.0 | https://github.com/jonschlinkert/is-number |
-| is-stream | 2.0.1 | https://github.com/sindresorhus/is-stream#readme |
 | is-wsl | 2.2.0 | https://github.com/sindresorhus/is-wsl#readme |
 | jest-get-type | 29.6.3 | https://github.com/jestjs/jest#readme |
 | jest-util | 29.7.0 | https://github.com/jestjs/jest#readme |
 | jest-validate | 29.7.0 | https://github.com/jestjs/jest#readme |
 | jest-worker | 29.7.0 | https://github.com/jestjs/jest#readme |
 | jimp-compact | 0.16.1 | https://github.com/nuxt-community/jimp-compact#readme |
-| jose | 5.10.0 | https://github.com/panva/jose |
 | js-tokens | 4.0.0 | https://github.com/lydell/js-tokens#readme |
 | js-yaml | 4.3.2 | https://github.com/nodeca/js-yaml#readme |
 | jsesc | 3.1.0 | https://mths.be/jsesc |
@@ -551,7 +539,7 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | mime | 1.6.0 | https://github.com/broofa/node-mime#readme |
 | mime-db | 1.52.0, 1.54.0 | https://github.com/jshttp/mime-db#readme |
 | mime-types | 2.1.35, 3.0.2 | https://github.com/jshttp/mime-types#readme |
-| mimic-fn | 1.2.0, 2.1.0 | https://github.com/sindresorhus/mimic-fn#readme |
+| mimic-fn | 1.2.0 | https://github.com/sindresorhus/mimic-fn#readme |
 | ms | 2.0.0, 2.1.3 | https://github.com/vercel/ms#readme |
 | multitars | 1.0.2 | https://github.com/expo/multitars#readme |
 | nanoid | 3.3.20 | https://github.com/ai/nanoid#readme |
@@ -560,16 +548,14 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | node-int64 | 0.4.0 | https://github.com/broofa/node-int64#readme |
 | node-releases | 2.0.63 | https://github.com/chicoxyzzy/node-releases#readme |
 | noxcturnal | 0.1.11 | https://github.com/expo/noxcturnal#readme |
-| npm-run-path | 4.0.1 | https://github.com/sindresorhus/npm-run-path#readme |
 | nullthrows | 1.1.1 | https://github.com/zertosh/nullthrows#readme |
 | ob1 | 0.87.1, 0.87.2 | https://github.com/react/metro#readme |
 | object-assign | 4.1.1 | https://github.com/sindresorhus/object-assign#readme |
 | on-finished | 2.3.0, 2.4.2 | https://github.com/jshttp/on-finished#readme |
 | on-headers | 1.1.0 | https://github.com/jshttp/on-headers#readme |
-| onetime | 2.0.1, 5.1.2 | https://github.com/sindresorhus/onetime#readme |
+| onetime | 2.0.1 | https://github.com/sindresorhus/onetime#readme |
 | open | 8.4.2 | https://github.com/sindresorhus/open#readme |
 | ora | 3.4.0 | https://github.com/sindresorhus/ora#readme |
-| os-paths | 4.4.0 | https://github.com/rivy/js.os-paths#readme |
 | parse-png | 2.1.0 | https://github.com/kevva/parse-png#readme |
 | parseurl | 1.3.3 | https://github.com/pillarjs/parseurl#readme |
 | path-key | 3.1.1 | https://github.com/sindresorhus/path-key#readme |
@@ -611,7 +597,6 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | resolve-from | 5.0.0 | https://github.com/sindresorhus/resolve-from#readme |
 | resolve-workspace-root | 2.0.1 | https://github.com/byCedric/resolve-workspace-root#readme |
 | restore-cursor | 2.0.0 | https://github.com/sindresorhus/restore-cursor#readme |
-| retry | 0.13.1 | https://github.com/tim-kos/node-retry |
 | safe-buffer | 5.2.1 | https://github.com/feross/safe-buffer |
 | sandbox-cli-detector | 0.2.0 | https://github.com/davidmokos/sandbox-cli-detector#readme |
 | scheduler | 0.28.0 | https://react.dev/ |
@@ -635,7 +620,6 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | statuses | 1.5.0, 2.0.2 | https://github.com/jshttp/statuses#readme |
 | string-width | 4.2.3 | https://github.com/sindresorhus/string-width#readme |
 | strip-ansi | 5.2.0, 6.0.1 | https://github.com/chalk/strip-ansi#readme |
-| strip-final-newline | 2.0.0 | https://github.com/sindresorhus/strip-final-newline#readme |
 | structured-headers | 0.4.1 | https://github.com/evert/structured-header#readme |
 | style-mod | 4.1.4 | https://code.haverbeke.berlin/marijn/style-mod |
 | styleq | 0.1.3 | https://github.com/necolas/styleq#readme |
@@ -644,14 +628,12 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | supports-preserve-symlinks-flag | 1.0.0 | https://github.com/inspect-js/node-supports-preserve-symlinks-flag#readme |
 | terminal-link | 2.1.1 | https://github.com/sindresorhus/terminal-link#readme |
 | throat | 5.0.0 | https://github.com/ForbesLindesay/throat#readme |
-| throttleit | 2.1.0 | https://github.com/sindresorhus/throttleit#readme |
 | tinyglobby | 0.2.17 | https://superchupu.dev/tinyglobby |
 | to-regex-range | 5.0.1 | https://github.com/micromatch/to-regex-range |
 | toidentifier | 1.0.1 | https://github.com/component/toidentifier#readme |
 | toqr | 0.1.1 | https://github.com/kitten/toqr#readme |
 | tr46 | 0.0.3 | https://github.com/Sebmaster/tr46.js#readme |
 | ua-parser-js | 1.0.41 | https://uaparser.dev |
-| undici | 6.29.1 | https://undici.nodejs.org |
 | undici-types | 6.21.0 | https://undici.nodejs.org |
 | unicode-canonical-property-names-ecmascript | 2.0.1 | https://github.com/mathiasbynens/unicode-canonical-property-names-ecmascript |
 | unicode-match-property-ecmascript | 2.0.0 | https://github.com/mathiasbynens/unicode-match-property-ecmascript |
@@ -671,12 +653,9 @@ The desktop app embeds Electron (MIT) and Chromium, whose licences ship inside t
 | whatwg-url-minimum | 0.2.0 | https://github.com/expo/whatwg-url-minimum#readme |
 | wrap-ansi | 7.0.0 | https://github.com/chalk/wrap-ansi#readme |
 | ws | 7.5.13, 8.22.1 | https://github.com/websockets/ws |
-| xdg-app-paths | 5.5.1 | https://github.com/rivy/js.xdg-app-paths#readme |
-| xdg-portable | 7.3.0 | https://github.com/rivy/js.xdg-portable#readme |
 | xml2js | 0.6.0 | https://github.com/Leonidas-from-XIV/node-xml2js |
 | xmlbuilder | 11.0.1, 15.1.1 | http://github.com/oozcitak/xmlbuilder-js |
 | yargs | 17.7.3 | https://yargs.js.org/ |
-| zod | 4.1.11 | https://zod.dev |
 
 ### MPL-2.0 (2)
 
