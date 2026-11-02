@@ -5,7 +5,7 @@ import { PUBLIC_ROUTES, createApp } from '../src/app';
 import { ConfigError } from '../src/config';
 import { CODE_TTL_MS } from '../src/codes';
 import { TOKEN_TTL_MS } from '../src/devices';
-import { CUSTOM_SCHEME_REDIRECT } from '../src/redirects';
+import { CUSTOM_SCHEME_REDIRECT, safeReturnPath } from '../src/redirects';
 import { MemoryStore } from '../src/store';
 import {
   Jar,
@@ -303,6 +303,38 @@ describe('open redirects', () => {
       expect(res.headers.get('Location')).toBeNull();
       expect(await res.text()).not.toContain('<script>');
     }
+  });
+
+  // Security review 34c08ae (MAJOR): these normalised to `//evil.com` and redirected off-site.
+  for (const target of ['/..//evil.com', '/.%2E//evil.com', '/%2e%2e//evil.com', '/\\evil.com', '/a/../\\evil.com', '/%5cevil.com', '/x/..%2F/evil.com', '/./evil.com', '/%2F/evil.com', '/a//evil.com']) {
+    it(`web return_to ${JSON.stringify(target)} falls back to exactly /`, async () => {
+      const h = setup();
+      const jar = new Jar();
+      const start = await h.req(`/api/auth/web/start?return_to=${encodeURIComponent(target)}`);
+      jar.absorb(start);
+      const { code, state } = h.github.approve(start.headers.get('Location')!, OWNER);
+      const cb = await h.req(`/api/auth/github/callback?code=${code}&state=${state}`, { headers: { Cookie: jar.header() } });
+      expect(cb.headers.get('Location')).toBe('/');
+    });
+  }
+
+  it('safeReturnPath never emits anything but a same-origin path (corpus)', () => {
+    const origin = new URL('https://margin.test');
+    const pieces = ['/', '//', '\\', '.', '..', '%2e', '%2E', '%2f', '%5c', 'evil.com', 'a', '?', '#', '@', ':', '%', ' ', '\t'];
+    let checked = 0;
+    for (const a of pieces) for (const b of pieces) for (const c of pieces) for (const d of pieces) {
+      const raw = `/${a}${b}${c}${d}`;
+      const out = safeReturnPath(raw, origin);
+      expect(out.startsWith('/'), raw).toBe(true);
+      expect(out.startsWith('//') || out.startsWith('/\\'), raw).toBe(false);
+      expect(new URL(out, origin).origin, raw).toBe(origin.origin);
+      // What we emit is exactly what a browser will request: no further normalisation.
+      expect(`${new URL(out, origin).pathname}${new URL(out, origin).search}`, raw).toBe(out);
+      checked++;
+    }
+    expect(checked).toBe(pieces.length ** 4);
+    expect(safeReturnPath('/library?x=1', origin)).toBe('/library?x=1');
+    expect(safeReturnPath('/notes/a%20b', origin)).toBe('/notes/a%20b');
   });
 
   for (const target of ['//evil.example/x', 'https://evil.example/', '/\\evil.example', '/%5Cevil.example', 'javascript:alert(1)', ' /x', '/\t/evil.example']) {

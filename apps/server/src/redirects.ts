@@ -32,20 +32,35 @@ export function isAllowedNativeRedirect(uri: string): boolean {
 
 /**
  * Where the hosted web build lands after signing in: a path on this origin.
- * Refuses absolute URLs, scheme-relative `//host`, backslash tricks (`/\host`,
- * which browsers treat as `//host`), control characters, and anything that
- * resolves to another origin.
+ * Anything doubtful falls back to `/`. We check the raw value *and* the value
+ * we will actually emit, and require that URL parsing didn't change it: the
+ * earlier version validated the raw string but returned the normalised
+ * pathname, so `/..//evil.com` became `//evil.com` (an open redirect).
+ *
+ * Refused (path part): absolute or scheme-relative URLs, backslashes, `//`
+ * anywhere, dot segments (`/./`, `/../`), percent-encoded dots, slashes or
+ * backslashes (`%2e`, `%2f`, `%5c`), and control or whitespace characters.
  */
 export function safeReturnPath(raw: string | undefined, origin: URL): string {
   if (!raw) return '/';
-  // eslint-disable-next-line no-control-regex
-  if (!raw.startsWith('/') || raw.startsWith('//') || raw.includes('\\') || /[\u0000- \u007f]/.test(raw)) {
-    return '/';
-  }
+  const q = raw.indexOf('?');
+  const pathPart = q === -1 ? raw : raw.slice(0, q);
+  const unsafe =
+    !pathPart.startsWith('/') ||
+    pathPart.includes('//') ||
+    raw.includes('\\') ||
+    raw.includes('#') ||
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u0020\u007f]/.test(raw) ||
+    /%(?:2e|2f|5c)/i.test(pathPart) ||
+    pathPart.split('/').some((seg) => seg === '.' || seg === '..');
+  if (unsafe) return '/';
   try {
     const resolved = new URL(raw, origin);
-    if (resolved.origin !== origin.origin) return '/';
-    return `${resolved.pathname}${resolved.search}`;
+    const out = `${resolved.pathname}${resolved.search}`;
+    if (resolved.origin !== origin.origin || out !== raw) return '/';
+    if (!out.startsWith('/') || out.startsWith('//') || out.startsWith('/\\')) return '/';
+    return out;
   } catch {
     return '/';
   }

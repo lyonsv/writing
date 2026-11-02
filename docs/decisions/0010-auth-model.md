@@ -59,7 +59,7 @@ M5 will put the owner's documents on a server. No route may be exposed without a
   - The cookie is `__Host-margin_session`, HttpOnly, Secure, SameSite=Lax, `Path=/`, and lives 90 days.
   - `requireAuth` accepts the bearer header **or** this cookie.
 - **CSRF:** cookie-authenticated non-GET requests must carry `Origin` equal to `PUBLIC_URL`. SameSite=Lax already withholds the cookie on cross-site POST/DELETE.
-- `return_to` must be a same-origin path (`//host`, `/\host`, absolute URLs and control characters fall back to `/`).
+- `return_to` must be a same-origin path. Doubtful values fall back to `/`: absolute and scheme-relative URLs, `//` anywhere in the path, backslashes, dot segments, percent-encoded dots, slashes or backslashes, fragments, control characters, and anything URL parsing would rewrite. The value emitted is checked, not just the input (see Amendments).
 - **Not done (M8):** serving the static web export *behind* this cookie, and a sign-in screen in the browser build. Hosting the web build is an M8 task, and it must route the static files through the same gate (e.g. a Hono static handler after `requireAuth`, or Vercel Routing Middleware that checks the cookie against the same store).
 
 ### Hygiene
@@ -73,7 +73,7 @@ M5 will put the owner's documents on a server. No route may be exposed without a
   | failed auth (401s) | 100 |
 
   **Limitation:** each Fluid Compute instance counts separately and resets on cold start. Use Vercel Firewall rules for a hard limit. Codes and tokens are 256-bit, so this is abuse damping, not the security boundary.
-- **No open redirects:** the server only redirects to GitHub (built from config), an allowlisted native redirect (ADR 0011), or a same-origin path. A bad redirect target gets a 400 page, never a redirect.
+- **No open redirects:** the server only redirects to GitHub (built from config), an allowlisted native redirect (ADR 0011), or a same-origin path from `safeReturnPath`. A bad native redirect target gets a 400 page, never a redirect; a bad `return_to` becomes `/`.
 - **Logging:** structured events only (`signin.denied`, `token.issued`…), with GitHub ids but never tokens, codes, `state` or GitHub tokens. A test greps the logs. Don't add Hono's `logger()` middleware: it logs URLs, and callback URLs carry codes.
 - **Headers:** every response gets these.
 
@@ -93,3 +93,6 @@ M5 will put the owner's documents on a server. No route may be exposed without a
 - Adding a second person means adding a `login:id` pair. There are no roles; every allowlisted user sees only their own devices, but M5 must still scope data per GitHub id if that ever matters.
 - GitHub is the only identity provider. If GitHub is down, existing devices keep working; only new sign-ins fail.
 - Not verified against real GitHub or a real Vercel deployment (M4 was local-only by brief). In particular, GitHub's PKCE support for OAuth Apps and Vercel's Hono zero-config detection in this monorepo should be confirmed on the first deploy (M8, `docs/server-setup.md`).
+
+## Amendments (2026-11-02, after the M4 security review of 34c08ae)
+- **Open redirect fixed.** As first written, `safeReturnPath` validated the raw `return_to` but returned the URL-normalised pathname, so `/..//evil.com` (also `/.%2E//evil.com` and `/%2e%2e//evil.com`) produced `Location: //evil.com`. The claim above that this couldn't happen was wrong. It now refuses dot segments, encoded dots, slashes and backslashes, and `//`, and requires that the emitted value equals the input and is a same-origin path. Tests cover the reported payloads, plus a 18⁴-case corpus asserting the output is always a same-origin path that browsers won't re-normalise.
