@@ -17,22 +17,31 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 - [ ] Typewriter scrolling
 - [ ] Hide all chrome; toggle via shortcut
 
-## M3 — Document library & sync
+## M3 — Local document library
 - [ ] Local markdown store with folders (create / rename / move / delete)
 - [ ] Library sidebar & quick open
-- [ ] Sync server on Vercel (single-user, token auth)
-- [ ] Desktop sync client, conflict handling
+- [ ] First-run: choose documents folder (default `~/Documents/Margin`)
 
-## M4 — Deployment
-- [ ] Vercel production deploy of server
-- [ ] macOS app packaging
+## M4 — Authentication (before any server is exposed)
+Nothing server-side ships without this. See ADR to be written in this milestone.
+- [ ] Sign in with GitHub (OAuth), server-side allowlist so only the owner's GitHub account can sign in
+- [ ] Server issues per-device, revocable tokens; desktop stores token in OS keychain (Electron `safeStorage`), iOS in `expo-secure-store`
+- [ ] Device list + revoke endpoint; token expiry/refresh
+- [ ] Any hosted web build is also behind sign-in
+- [ ] Tests: unauthenticated / wrong-user / revoked-token requests are rejected
 
-## M5 — iOS (Expo)
-- [ ] iOS app sharing UI + core packages
-- [ ] Native editor + focus mode
-- [ ] Sync on iOS
+## M5 — Sync server & desktop sync
+- [ ] Sync API on Vercel Functions, auth required on every route (from M4)
+- [ ] Vercel Blob **private** store; one file per document, ETag-based writes
+- [ ] Desktop sync client; conflicts keep both copies (`name (conflict YYYY-MM-DD).md`)
+- [ ] Preview deploys on Vercel; secrets only in Vercel env vars
 
-## M6 — Polished product
+## M6 — iOS (Expo)
+- [ ] iOS app sharing UI + core packages; develop with Expo Go / dev build
+- [ ] Shared CodeMirror DOM editor + focus mode on iOS
+- [ ] Local store (`expo-file-system`) + sync + sign-in on iOS
+
+## M7 — Polished product
 - [ ] Logo / wordmark (original design, SVG source in `assets/brand/`)
 - [ ] App icons: macOS `.icns` (electron-builder), iOS icon + splash (Expo `app.json`), favicon for web
 - [ ] Consistent visual polish pass: spacing, typography, empty states, onboarding (first-run picks documents folder)
@@ -40,4 +49,14 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done. Agents: update thi
 - [ ] LICENSE (MIT) + font licence notice (IBM Plex Mono, OFL)
 - [ ] Signed/notarized macOS release build (optional; needs Apple Developer account)
 
-> Earlier milestones keep README's setup section accurate as they land; M6 is the final consolidation and polish.
+> Earlier milestones keep README's setup section accurate as they land; M7 is the final consolidation and polish.
+
+## M8 — Production deployment (daily use)
+Goal: Margin installed and authenticated on the owner's Mac and iPhone, with a real home-screen icon.
+- [ ] Server: Vercel production deploy, env vars (OAuth secrets, allowlist, Blob token) set in Vercel only; optional custom domain
+- [ ] macOS: packaged `.app` installed in `/Applications`; releases published to GitHub Releases; auto-update via `electron-updater` (requires signing — see below)
+- [ ] iOS: **EAS Build → TestFlight** (recommended; needs Apple Developer Program, $99/yr) for a real app with home-screen icon; **EAS Update** for over-the-air JS updates without rebuilding
+- [ ] Fallback if no Apple Developer account: install the hosted web build as a home-screen PWA (icon on phone, sign-in required, works via Safari)
+- [ ] Not planned: public App Store listing (review overhead isn't needed for personal use; can be added later from the same EAS pipeline)
+- [ ] Verify end-to-end: write on Mac → appears on iPhone and vice versa; revoked device loses access
+- [ ] Backups: periodic export of the Blob store (e.g. scheduled GitHub Action or Vercel cron to a private archive)
