@@ -8,9 +8,11 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, useColorScheme } from 'react-native';
 
+import { AccountView } from '../components/account/AccountView';
 import MarkdownEditor, { type EditorCommand } from '../components/editor/MarkdownEditor';
 import { QuickOpen } from '../components/library/QuickOpen';
 import { Sidebar, type SidebarColors } from '../components/library/Sidebar';
+import { getAccountBackend } from '../src/account/account';
 import { getDesktopBridge, getLibraryBackend } from '../src/storage/documentStore';
 import { useSettings } from '../src/useSettings';
 import { useWorkspace } from '../src/useWorkspace';
@@ -24,6 +26,7 @@ export default function EditorScreen() {
   const ws = useWorkspace(settings, loaded, update);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [renameRequest, setRenameRequest] = useState<string | null>(null);
+  const [accountVisible, setAccountVisible] = useState(false);
   const background = dark ? '#1b1b1c' : '#fbfbfa';
   const colors = dark ? DARK : LIGHT;
   const desktop = getDesktopBridge() !== undefined;
@@ -51,6 +54,8 @@ export default function EditorScreen() {
         }
         case 'toggle-sidebar':
           return toggleSidebar();
+        case 'account':
+          return setAccountVisible(true);
       }
     },
     [ws, sidebarVisible, update, toggleSidebar],
@@ -136,6 +141,16 @@ export default function EditorScreen() {
           </Text>
         ) : null}
       </View>
+      {accountVisible ? (
+        <AccountView
+          backend={getAccountBackend()}
+          colors={colors}
+          onClose={() => {
+            setAccountVisible(false);
+            if (typeof window !== 'undefined') window.dispatchEvent(new Event(FOCUS_EDITOR_EVENT));
+          }}
+        />
+      ) : null}
       {quickOpenVisible ? (
         <QuickOpen
           documents={documents}
