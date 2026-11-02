@@ -36,6 +36,9 @@ import { FsExistsError, type FsStat, type NativeFs } from './nativeFs';
 /** Lowercase hex SHA-256 (same as desktop and server; ADR 0013). Synchronous, pure JS. */
 export const sha256Hex = (bytes: Uint8Array): string => toHex(sha256(bytes));
 
+/** Temp files younger than this may belong to a write in progress (another tab); cleanup leaves them. */
+export const TEMP_MAX_AGE_MS = 60_000;
+
 /** How long deleted items stay in Recently Deleted. */
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -200,12 +203,19 @@ export class NativeLibrary implements DocumentStore {
     return joinDocPath(this.abs(dirKey), `.margin-${(this.options.randomId ?? defaultId)()}.tmp`);
   }
 
-  /** Removes `.margin-*.tmp` leftovers of an interrupted write (never a user file). */
+  /**
+   * Removes `.margin-*.tmp` leftovers of an interrupted write (never a user file),
+   * but only ones older than TEMP_MAX_AGE_MS: another writer (a second browser
+   * tab starting up) must not delete a temp file that is mid-write right now.
+   */
   private async cleanTemps(rel: string, depth = 0): Promise<void> {
     if (depth > 64) return;
     for (const e of await this.fs.list(this.abs(rel))) {
-      if (e.kind === 'file' && /^\.margin-[a-z0-9]+\.tmp$/.test(e.name)) await this.fs.remove(joinDocPath(this.abs(rel), e.name));
-      else if (e.kind === 'dir' && !e.name.startsWith('.')) await this.cleanTemps(joinDocPath(rel, e.name), depth + 1);
+      const p = joinDocPath(this.abs(rel), e.name);
+      if (e.kind === 'file' && /^\.margin-[a-z0-9]+\.tmp$/.test(e.name)) {
+        const st = await this.fs.stat(p);
+        if (st && Date.now() - st.modifiedAt > TEMP_MAX_AGE_MS) await this.fs.remove(p);
+      } else if (e.kind === 'dir' && !e.name.startsWith('.')) await this.cleanTemps(joinDocPath(rel, e.name), depth + 1);
     }
   }
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -65,12 +65,22 @@ describe('NativeLibrary: paths', () => {
 
   it('init removes leftover temp files from an interrupted write, and nothing else', async () => {
     put('notes/.margin-abc123.tmp', 'partial');
+    const old = new Date(Date.now() - 2 * 60_000);
+    utimesSync(file('notes/.margin-abc123.tmp'), old, old);
     put('notes/.margin-notes.md', 'user file?');
     put('keep.md', 'k');
     await new NativeLibrary({ fs }).init();
     expect(existsSync(file('notes/.margin-abc123.tmp'))).toBe(false);
     expect(get('notes/.margin-notes.md')).toBe('user file?');
     expect(get('keep.md')).toBe('k');
+  });
+});
+
+describe('NativeLibrary: a second writer starting up (validator M8 LOW)', () => {
+  it('init leaves a fresh temp file alone: it may be another tab’s write in progress', async () => {
+    put('.margin-inflight1.tmp', 'being written right now');
+    await new NativeLibrary({ fs }).init();
+    expect(get('.margin-inflight1.tmp')).toBe('being written right now');
   });
 });
 
