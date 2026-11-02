@@ -36,6 +36,13 @@ export async function clearShellCaches(): Promise<void> {
   navigator.serviceWorker?.controller?.postMessage({ type: 'margin:signed-out' });
 }
 
+/** One exclusive lock per library across tabs (Web Locks); a no-op where unsupported (one tab is then the only writer that matters). */
+function libraryLock(): <T>(fn: () => Promise<T>) => Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks) return (fn) => fn();
+  return (fn) => locks.request('margin:library', () => fn()) as Promise<Awaited<ReturnType<typeof fn>>>;
+}
+
 export interface WebServices {
   fs: NativeFs;
   library: NativeLibrary;
@@ -49,7 +56,14 @@ let services: WebServices | null = null;
 export function webServices(): WebServices {
   if (services) return services;
   const fs = new LazyFs(openMarginDb().then((db) => new IdbFs(db)));
-  const library = new NativeLibrary({ fs });
+  // Several tabs share one IndexedDB library (validator M8): saves and sync runs take one
+  // Web Lock, and every change is broadcast so other tabs refresh and reload clean editors.
+  const exclusive = libraryLock();
+  const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('margin-library') : null;
+  const library = new NativeLibrary({ fs, exclusive, onLocalWrite: (path) => channel?.postMessage({ path }) });
+  channel?.addEventListener('message', (e: MessageEvent<{ path?: unknown }>) => {
+    if (typeof e.data?.path === 'string') library.externalWrite(e.data.path);
+  });
   const ready = library.init().then(async () => {
     try {
       await migrateLocalStorage(library, window.localStorage);
@@ -70,7 +84,7 @@ export function webServices(): WebServices {
       })
     : null;
   const sync = account
-    ? new NativeSyncService({ library, fs, account, beforeSync: () => flushWorkspace(), deviceLabel: 'browser' })
+    ? new NativeSyncService({ library, fs, account, beforeSync: () => flushWorkspace(), deviceLabel: 'browser', exclusive })
     : null;
   services = { fs, library, ready, account, sync };
 

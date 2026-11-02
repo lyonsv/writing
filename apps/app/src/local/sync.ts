@@ -41,6 +41,12 @@ export interface NativeSyncOptions {
   debounceMs?: number;
   /** Name of this device in messages. */
   deviceLabel?: string;
+  /**
+   * Web: a lock shared by all tabs of this library (Web Locks), so only one tab
+   * syncs at a time and no tab saves in the middle of another's run. Taken after
+   * `beforeSync` (whose flush saves under the same lock).
+   */
+  exclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
 interface StateFile {
@@ -220,13 +226,16 @@ export class NativeSyncService {
       await this.options.fs.writeAtomic(file, encodeUtf8(JSON.stringify(state)));
     };
     try {
-      const report = await runSync({
-        local: new LibrarySyncLocal(this.options.library),
-        remote: new HttpSyncRemote(this.options.account.request),
-        base,
-        saveBase: persist,
-        hash: sha256Hex,
-      });
+      const exclusive = this.options.exclusive ?? (<T,>(fn: () => Promise<T>) => fn());
+      const report = await exclusive(() =>
+        runSync({
+          local: new LibrarySyncLocal(this.options.library),
+          remote: new HttpSyncRemote(this.options.account.request),
+          base,
+          saveBase: persist,
+          hash: sha256Hex,
+        }),
+      );
       await persist();
       this.lastReport = report;
       if (report.stale.length) {

@@ -42,4 +42,14 @@ export interface NativeFs {
   mkdir(path: string): Promise<void>;
   /** Removes a file or a directory tree. Fine if it doesn't exist. */
   remove(path: string): Promise<void>;
+  /**
+   * Optional, for stores with more than one writer (IndexedDB shared by browser
+   * tabs): compare and act as ONE atomic step. `accept` gets the current file's
+   * hash (`hash` of its bytes; null if absent) inside the transaction; the write
+   * or move happens only if it returns true. Single-writer stores (iOS, tests)
+   * omit these and the library's per-path queue makes check-then-act atomic.
+   */
+  writeIf?(path: string, bytes: Uint8Array, accept: (current: string | null) => boolean, hash: (b: Uint8Array) => string): Promise<boolean>;
+  /** Like `move` (never replaces; FsExistsError), but only if `accept(hash of from)`. */
+  moveIf?(from: string, to: string, accept: (current: string | null) => boolean, hash: (b: Uint8Array) => string): Promise<boolean>;
 }

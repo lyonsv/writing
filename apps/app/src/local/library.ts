@@ -56,6 +56,13 @@ export interface NativeLibraryOptions {
   now?: () => Date;
   /** Random id for temp and trash names. */
   randomId?: () => string;
+  /**
+   * Web (several tabs on one IndexedDB): runs each save under a lock shared by
+   * every tab of this library (Web Locks), the same one sync runs take.
+   */
+  exclusive?: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** Called after this instance changed `path` ('' = structure), to tell other tabs (BroadcastChannel). */
+  onLocalWrite?: (path: string) => void;
 }
 
 interface Known {
@@ -134,6 +141,30 @@ export class NativeLibrary implements DocumentStore {
 
   private changed(): void {
     for (const l of this.changeListeners) l();
+  }
+
+  /** A change made here: listeners, plus other tabs (`onLocalWrite`). */
+  private changedLocally(path = ''): void {
+    this.changed();
+    this.options.onLocalWrite?.(path);
+  }
+
+  /**
+   * Another writer (another browser tab) changed `path` ('' = anything): forget
+   * cached hashes and stat shortcuts, refresh listings, and offer an open
+   * document's new text to its editor (clean editors reload; dirty ones save to
+   * a conflict copy, ADR 0006).
+   */
+  externalWrite(path: string): void {
+    if (path === '') {
+      this.hashCache.clear();
+      for (const k of this.known.values()) k.stat = null;
+    } else {
+      this.hashCache.delete(path);
+      this.invalidateKnownStat(path);
+      this.checkExternal(path);
+    }
+    this.changed();
   }
 
   // ---------------------------------------------------------------- paths
@@ -264,7 +295,7 @@ export class NativeLibrary implements DocumentStore {
           if (!(e instanceof DocumentStoreError && e.code === 'exists')) throw e;
         });
         bytes = (await this.bytesOrNull(key)) ?? new Uint8Array();
-        this.changed();
+        this.changedLocally();
       }
       const st = await this.fs.stat(this.abs(key));
       this.known.set(key, { hash: sha256Hex(bytes), stat: st ? { size: st.size, modifiedAt: st.modifiedAt } : null });
@@ -309,15 +340,37 @@ export class NativeLibrary implements DocumentStore {
     if (this.readOnly.has(key)) return Promise.reject(new DocumentStoreError('invalid-path', `${key} isn't UTF-8 text; opened read-only`));
     const seq = ++this.writeSeq;
     this.latestWrite.set(key, seq);
-    return this.queue.run(key, async (): Promise<SaveResult> => {
-      if (this.latestWrite.get(key) !== seq) return { status: 'superseded', path: key };
-      return this.writeNow(key, encodeUtf8(content));
-    });
+    // The cross-tab lock is taken BEFORE entering the path queue: a save waiting for the
+    // lock (held by a sync run) must not hold the queue slot that the run itself needs.
+    const exclusive = this.options.exclusive ?? (<T,>(fn: () => Promise<T>) => fn());
+    return exclusive(() =>
+      this.queue.run(key, async (): Promise<SaveResult> => {
+        if (this.latestWrite.get(key) !== seq) return { status: 'superseded', path: key };
+        const result = await this.writeNow(key, encodeUtf8(content));
+        this.options.onLocalWrite?.(result.status === 'conflict' ? '' : key);
+        return result;
+      }),
+    );
   }
 
   /** Runs inside the queue for `key`. */
   private async writeNow(key: string, bytes: Uint8Array): Promise<SaveResult> {
     const known = this.known.get(key);
+    if (known && this.fs.writeIf) {
+      // Several writers (browser tabs): the "unchanged since we read it?" check and the
+      // write are one transaction, so another tab's sync can't land in between.
+      await this.fs.mkdir(this.abs(dirname(key)));
+      const ok = await this.fs.writeIf(this.abs(key), bytes, (cur) => cur === null || cur === known.hash, sha256Hex);
+      if (!ok) {
+        const disk = await this.diskHash(key);
+        if (disk) return this.writeConflictCopy(key, bytes, disk.hash);
+        return this.writeNow(key, bytes); // vanished in between: recreate
+      }
+      this.hashCache.delete(key);
+      const st = await this.fs.stat(this.abs(key));
+      this.known.set(key, { hash: sha256Hex(bytes), stat: st ? { size: st.size, modifiedAt: st.modifiedAt } : null });
+      return { status: 'saved', path: key };
+    }
     if (known) {
       const st = await this.fs.stat(this.abs(key));
       const unchanged = st && known.stat && st.size === known.stat.size && st.modifiedAt === known.stat.modifiedAt;
@@ -348,7 +401,7 @@ export class NativeLibrary implements DocumentStore {
     const st = await this.fs.stat(this.abs(copyKey));
     this.known.set(copyKey, { hash: sha256Hex(bytes), stat: st ? { size: st.size, modifiedAt: st.modifiedAt } : null });
     this.redirects.set(key, { to: copyKey, diskHash });
-    this.changed();
+    this.changedLocally();
     return { status: 'conflict', path: key, conflictPath: copyKey };
   }
 
@@ -390,7 +443,7 @@ export class NativeLibrary implements DocumentStore {
     this.assertDocumentPath(key);
     await this.queue.run(key, () => this.createExclusive(key, new Uint8Array()));
     this.moved.delete(key);
-    this.changed();
+    this.changedLocally();
   }
 
   async createFolder(relative: string): Promise<void> {
@@ -399,7 +452,7 @@ export class NativeLibrary implements DocumentStore {
     const st = await this.fs.stat(this.abs(key));
     if (st?.kind === 'file') throw new DocumentStoreError('exists', `${key} is a document`);
     await this.fs.mkdir(this.abs(key));
-    this.changed();
+    this.changedLocally();
   }
 
   /**
@@ -423,7 +476,8 @@ export class NativeLibrary implements DocumentStore {
         // Re-check under the locks: the source may have gone (deleted, or moved by sync) meanwhile.
         const now = await this.fs.stat(this.abs(srcKey));
         if (!now || now.kind !== st.kind) throw new DocumentStoreError('not-found', `No such path ${from}`);
-        if (options.expectHash !== undefined) {
+        const atomicCheck = options.expectHash !== undefined && st.kind === 'file' && this.fs.moveIf !== undefined;
+        if (options.expectHash !== undefined && !atomicCheck) {
           const disk = st.kind === 'file' ? await this.diskHash(srcKey) : null;
           if (disk?.hash !== options.expectHash) throw new DocumentStoreError('changed', `${from} changed`);
         }
@@ -440,6 +494,11 @@ export class NativeLibrary implements DocumentStore {
               await this.fs.move(tmp, this.abs(srcKey)).catch(() => undefined);
               throw error;
             }
+          } else if (atomicCheck) {
+            const expect = options.expectHash;
+            if (!(await this.fs.moveIf!(this.abs(srcKey), this.abs(dstKey), (cur) => cur === expect, sha256Hex))) {
+              throw new DocumentStoreError('changed', `${from} changed`);
+            }
           } else {
             await this.fs.move(this.abs(srcKey), this.abs(dstKey));
           }
@@ -451,6 +510,7 @@ export class NativeLibrary implements DocumentStore {
       }),
     );
     this.changed();
+    this.options.onLocalWrite?.('');
   }
 
   /** True if a directory entry spelled exactly like `key`'s last segment exists. */
@@ -504,17 +564,28 @@ export class NativeLibrary implements DocumentStore {
       await this.moveToTrash(key, now.kind);
       this.forgetTracked(key);
     });
-    this.changed();
+    this.changedLocally();
   }
 
-  private async moveToTrash(key: string, kind: 'file' | 'dir'): Promise<void> {
+  /** With `expect`, only a file whose hash is still `expect` moves (atomically, where the store can). */
+  private async moveToTrash(key: string, kind: 'file' | 'dir', expect?: string): Promise<boolean> {
+    if (expect !== undefined && !this.fs.moveIf) {
+      const disk = await this.diskHash(key);
+      if (disk?.hash !== expect) return false;
+    }
     const deletedAt = (this.options.now?.() ?? new Date()).getTime();
     const id = `${deletedAt}-${(this.options.randomId ?? defaultId)()}`;
     const dir = `${this.trashDir}/${id}`;
     await this.fs.mkdir(dir);
     const meta: TrashItem = { id, originalPath: key, kind: kind === 'dir' ? 'folder' : 'document', deletedAt };
     await this.fs.writeAtomic(`${dir}/meta.json`, encodeUtf8(JSON.stringify(meta)));
+    if (expect !== undefined && this.fs.moveIf) {
+      const moved = await this.fs.moveIf(this.abs(key), `${dir}/item`, (cur) => cur === expect, sha256Hex).catch(() => false);
+      if (!moved) await this.fs.remove(dir);
+      return moved;
+    }
     await this.fs.move(this.abs(key), `${dir}/item`);
+    return true;
   }
 
   // ---------------------------------------------------------------- Recently Deleted
@@ -545,7 +616,7 @@ export class NativeLibrary implements DocumentStore {
     const target = joinDocPath(parent, free);
     await this.queue.run(target, () => this.fs.move(`${this.trashDir}/${id}/item`, this.abs(target)));
     await this.fs.remove(`${this.trashDir}/${id}`);
-    this.changed();
+    this.changedLocally();
     return target;
   }
 
@@ -605,15 +676,20 @@ export class NativeLibrary implements DocumentStore {
           throw error;
         }
       }
-      const disk = await this.diskHash(key);
-      if (disk?.hash !== expect) return false;
-      await this.fs.writeAtomic(this.abs(key), bytes);
+      if (this.fs.writeIf) {
+        if (!(await this.fs.writeIf(this.abs(key), bytes, (cur) => cur === expect, sha256Hex))) return false;
+      } else {
+        const disk = await this.diskHash(key);
+        if (disk?.hash !== expect) return false;
+        await this.fs.writeAtomic(this.abs(key), bytes);
+      }
       this.invalidateKnownStat(key);
       return true;
     });
     if (ok) {
       this.changed();
       this.checkExternal(key);
+      this.options.onLocalWrite?.(key);
     }
     return ok;
   }
@@ -624,13 +700,14 @@ export class NativeLibrary implements DocumentStore {
     this.assertDocumentPath(key);
     const ok = await this.queue.run(key, async () => {
       this.hashCache.delete(key);
-      const disk = await this.diskHash(key);
-      if (disk?.hash !== expect) return false;
-      await this.moveToTrash(key, 'file');
+      if (!(await this.moveToTrash(key, 'file', expect))) return false;
       this.invalidateKnownStat(key);
       return true;
     });
-    if (ok) this.changed();
+    if (ok) {
+      this.changed();
+      this.options.onLocalWrite?.('');
+    }
     return ok;
   }
 
@@ -647,7 +724,7 @@ export class NativeLibrary implements DocumentStore {
   async conflictCopyForSync(relative: string, bytes: Uint8Array): Promise<string> {
     const key = this.key(relative);
     const copy = await this.claimConflictCopy(key, bytes);
-    this.changed();
+    this.changedLocally();
     return copy;
   }
 

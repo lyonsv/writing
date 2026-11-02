@@ -177,3 +177,19 @@ test('the service worker never caches API responses, and never serves the app af
   const after = await page.request.get(`${server.url}/api/me`);
   expect(after.status()).toBe(401);
 });
+
+test('two tabs: an edit in one reaches the other (BroadcastChannel), and saves and syncs share one lock (Web Locks)', async ({ page, context }) => {
+  await signIn(page);
+  const second = await context.newPage();
+  await second.goto(server.url);
+  await expect(second.getByTestId('editor')).toBeVisible({ timeout: 20_000 });
+  expect(await second.evaluate(() => typeof navigator.locks?.request === 'function' && typeof BroadcastChannel === 'function')).toBe(true);
+  // Both tabs show the welcome document. Type in the second; the first (clean) reloads it.
+  await typeAtEnd(second, '\nfrom the second tab');
+  await expect.poll(() => editorText(page), { timeout: 15_000 }).toContain('from the second tab');
+  // Nothing was turned into a conflict copy, and the server ends up with the text.
+  await syncNow(page);
+  await expect.poll(async () => (await serverDocs(page))['Welcome to Margin.md'] ?? '', { timeout: 20_000 }).toContain('from the second tab');
+  expect(Object.keys(await serverDocs(page)).filter((p) => p.includes('(conflict'))).toEqual([]);
+  await second.close();
+});

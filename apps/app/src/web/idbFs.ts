@@ -130,12 +130,35 @@ export class IdbFs implements NativeFs {
     });
   }
 
+  /** Compare-and-write in one transaction (other tabs can't write in between; validator M8 MEDIUM). */
+  async writeIf(path: string, bytes: Uint8Array, accept: (current: string | null) => boolean, hash: (b: Uint8Array) => string): Promise<boolean> {
+    const p = clean(path);
+    const copy = new Uint8Array(bytes);
+    return this.tx('readwrite', async (store) => {
+      if (!(await IdbFs.isDir(store, parentOf(p)))) throw new Error(`folder ${parentOf(p)} does not exist`);
+      const e = (await req(store.get(p))) as Entry | undefined;
+      if (e?.kind === 'dir') return false;
+      if (!accept(e ? hash(new Uint8Array(e.bytes ?? new Uint8Array())) : null)) return false;
+      await req(store.put({ path: p, parent: parentOf(p), kind: 'file', bytes: copy, size: copy.length, modifiedAt: stamp() } satisfies Entry));
+      return true;
+    });
+  }
+
+  async moveIf(from: string, to: string, accept: (current: string | null) => boolean, hash: (b: Uint8Array) => string): Promise<boolean> {
+    return this.moveImpl(from, to, (src) => (src.kind === 'file' ? accept(hash(new Uint8Array(src.bytes ?? new Uint8Array()))) : false));
+  }
+
   async move(from: string, to: string): Promise<void> {
+    await this.moveImpl(from, to, () => true);
+  }
+
+  private async moveImpl(from: string, to: string, accept: (src: Entry) => boolean): Promise<boolean> {
     const a = clean(from);
     const b = clean(to);
-    await this.tx('readwrite', async (store) => {
+    return this.tx('readwrite', async (store) => {
       const src = (await req(store.get(a))) as Entry | undefined;
       if (!src) throw new Error(`${a} does not exist`);
+      if (!accept(src)) return false;
       if (await req(store.get(b))) throw new FsExistsError(b);
       if (!(await IdbFs.isDir(store, parentOf(b)))) throw new Error(`folder ${parentOf(b)} does not exist`);
       if (b === a || b.startsWith(`${a}/`)) throw new Error('cannot move a folder into itself');
@@ -145,6 +168,7 @@ export class IdbFs implements NativeFs {
         await req(store.delete(e.path));
         await req(store.put({ ...e, path: next, parent: parentOf(next) }));
       }
+      return true;
     });
   }
 
