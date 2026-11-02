@@ -1,6 +1,6 @@
 # 0014. Vercel deployment: project settings, vercel.json, environments
 
-- **Status:** Accepted
+- **Status:** Accepted (storage on Vercel Blob **superseded by [ADR 0021](0021-github-storage.md)**: a private GitHub repository)
 - **Date:** 2026-11-02
 
 ## Context

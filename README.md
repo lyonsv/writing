@@ -18,7 +18,7 @@
 - **Library:** folders, quick open, rename and move (drag and drop), Trash. New documents are named by date.
 - **Never loses text:** every keystroke is saved within a moment and before quitting; writes are atomic; if a file changed elsewhere, your version is kept as a conflict copy rather than overwriting it ([ADR 0006](docs/decisions/0006-save-pipeline.md)).
 - **Optional sync:** sign in with GitHub to your own server. Edits from two devices are both kept. Works offline.
-- **Private by design:** single-user allowlist (GitHub login and numeric id), per-device revocable tokens, private Blob storage, no analytics.
+- **Private by design:** single-user allowlist (GitHub login and numeric id), per-device revocable tokens, storage in your own private GitHub repository (versioned, a backup by construction), no analytics.
 
 ### Keyboard shortcuts (macOS)
 
@@ -73,10 +73,10 @@ Development builds talk to the local server `http://127.0.0.1:3000`; the package
 3. `pnpm dev:server`, then `pnpm dev:desktop` and Margin › Sign In…
 
 ## Deploy your own server
-The server is a small Hono app (`apps/server`) for Vercel Functions, storing documents in a **private** Vercel Blob store. It fits the free Hobby plan for one person. The full walkthrough is [docs/server-setup.md](docs/server-setup.md); in short:
+The server is a small Hono app (`apps/server`) for Vercel Functions, storing your documents in a **private GitHub repository** that you own ([ADR 0021](docs/decisions/0021-github-storage.md)). It fits the free Vercel Hobby plan and GitHub's free private repos for one person. The full walkthrough is [docs/server-setup.md](docs/server-setup.md); in short:
 
 1. **Vercel project:** `npx vercel@latest link` at the repo root, with Root Directory `apps/server`, framework Hono and Node 24 ([ADR 0014](docs/decisions/0014-vercel-deploy.md)).
-2. **Blob stores:** create two **private** stores (`vercel blob create-store <name> --access private`), one connected to **Production** only and one to **Preview/Development**. Set `PRODUCTION_BLOB_STORE_ID` everywhere, so a preview can never use production data.
+2. **Storage repo:** create a **private** GitHub repo (e.g. `margin-library`) with a `main` branch and a `preview` branch. Create a **fine-grained personal access token** limited to *only that repository* with **Contents: Read and write** (nothing else). Set `MARGIN_STORE=github`, `GITHUB_STORE_TOKEN` (sensitive), `GITHUB_STORE_REPO=<you>/margin-library`, and `GITHUB_STORE_BRANCH=main` for Production and `preview` for Preview. Set `PRODUCTION_GITHUB_STORE=<you>/margin-library@main` for Preview, so a preview can never touch production data.
 3. **GitHub OAuth App** for production, with callback `https://<your-domain>/api/auth/github/callback`.
 4. **Environment variables** (Vercel only, never committed): `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` (sensitive), `ALLOWED_GITHUB_LOGINS` (`login:id`), `AUTH_SECRET` (different per environment), and `PUBLIC_URL`. Every variable is listed in [.env.example](.env.example). A missing or malformed one makes the server refuse every request rather than run half-configured.
 5. **Deploy:** `npx vercel@latest deploy --prod`. The build also exports the web app, so your server serves the iPhone/browser app at `/` (behind sign-in). Check that `curl https://<your-domain>/api/me` answers `401`. In Margin, set `MARGIN_SERVER_URL` (or `serverUrl` in settings.json) to your domain if it isn't `margin-sync.vercel.app`, and sign in.
@@ -100,7 +100,7 @@ flowchart LR
   end
   CORE["packages/core\npaths · tree · focus · sync engine · settings"]
   SRV["apps/server (Hono on Vercel)\nauth gate · devices · sync API"]
-  BLOB[("private Vercel Blob\nmanifest + content-addressed bodies")]
+  REPO[("private GitHub repo\nmanifest + content-addressed bodies")]
   GH["GitHub OAuth"]
 
   UI --> ED
@@ -113,7 +113,7 @@ flowchart LR
   UI --> CORE
   MAIN -- "HTTPS, device token" --> SRV
   NAT -- "HTTPS, device token" --> SRV
-  SRV --> BLOB
+  SRV --> REPO
   SRV --> GH
 ```
 

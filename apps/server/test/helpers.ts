@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { createApp, type AppDeps, type Logger } from '../src/createApp';
 import type { Config } from '../src/config';
-import { MemoryStore } from '../src/store';
+import { testStore } from './testStore';
 
 export const OWNER = { login: 'lyonsv', id: 1234567 };
 
@@ -112,7 +112,7 @@ export class Jar {
 }
 
 export function setup(opts: { config?: Partial<Config>; now?: () => number; web?: AppDeps['web'] } = {}) {
-  const store = new MemoryStore();
+  const store = testStore();
   const github = new MockGitHub();
   const logs: Array<{ event: string; fields?: Record<string, unknown> }> = [];
   const log: Logger = (event, fields) => logs.push({ event, fields });

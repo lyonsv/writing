@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { createApp, type AppDeps } from '../src/createApp';
 import type { Config } from '../src/config';
 import { listen } from '../src/local';
-import { MemoryStore } from '../src/store';
+import { testStore } from './testStore';
 
 /**
  * Test support for full round trips over real HTTP (desktop integration tests
@@ -91,7 +91,7 @@ export async function startTestServer(
   options: { web?: AppDeps['web'] } = {},
 ) {
   let config: Config | undefined;
-  const store = new MemoryStore();
+  const store = testStore();
   const app = createApp({ config: () => config!, store, log: () => {}, web: options.web });
   const server = await listen(app);
   config = {

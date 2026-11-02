@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { CodeRepository } from '../src/codes';
 import { DeviceRepository, TOUCH_INTERVAL_MS } from '../src/devices';
-import { Pepper } from '../src/crypto';
+import { Pepper, Sealer } from '../src/crypto';
+import { UsedSet } from '../src/usedSet';
 import { MemoryStore, type PutOptions } from '../src/store';
 
 const pepper = new Pepper('p'.repeat(32));
@@ -60,18 +61,18 @@ describe('store interleavings', () => {
 
   it('a second redemption between the first’s read and write loses', async () => {
     const store = new InterleavingStore();
-    const codes = new CodeRepository(store, pepper);
+    const codes = new CodeRepository(new Sealer('s'.repeat(32), 'one-time-code v1'), new UsedSet(store, pepper.hash));
     const v = newVerifier();
     const code = await codes.issue(who, s256(v), 'http://127.0.0.1:5000/callback');
     let inner: unknown;
     store.hook = {
-      when: (_k, val) => val.includes('usedAt'),
+      when: (k) => k === 'auth/used.json', // the first redemption's single-use write
       run: async () => {
         inner = await codes.redeem(code, v, 'http://127.0.0.1:5000/callback');
       },
     };
     const outer = await codes.redeem(code, v, 'http://127.0.0.1:5000/callback');
-    expect(inner).toEqual({ ok: true, identity: who });
+    expect(inner).toEqual({ ok: true, identity: who, deviceName: undefined });
     expect(outer).toEqual({ ok: false });
   });
 });

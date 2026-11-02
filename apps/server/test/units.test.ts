@@ -1,8 +1,6 @@
-import { BlobError, BlobNotFoundError, BlobPreconditionFailedError } from '@vercel/blob';
 import { describe, expect, it } from 'vitest';
 
-import { BlobStore, type BlobClient } from '../src/blobStore';
-import { ConfigError, isAllowed, loadConfig, parseAllowedUsers } from '../src/config';
+import { ConfigError, isAllowed, loadConfig, parseAllowedUsers, storeConfigFromEnv } from '../src/config';
 import { Sealer, hashMatches, pkceChallenge, safeEqual, sha256Hex } from '../src/crypto';
 import { cleanDeviceName } from '../src/devices';
 import { storeFromEnv } from '../src/env';
@@ -15,6 +13,7 @@ const ENV = {
   GITHUB_CLIENT_SECRET: 'secret',
   ALLOWED_GITHUB_LOGINS: 'lyonsv:1234567',
   AUTH_SECRET: 's'.repeat(32),
+  MARGIN_STORE: 'memory',
 };
 
 describe('config', () => {
@@ -42,22 +41,31 @@ describe('config', () => {
     }
   });
 
-  it('refuses the production Blob store outside production (ADR 0014)', () => {
-    const PROD = 'store_ProdStore123';
-    const prodToken = 'vercel_blob_rw_ProdStore123_secretsecret';
-    const previewToken = 'vercel_blob_rw_PreviewStore456_secretsecret';
-    const base = { ...ENV, VERCEL: '1', PRODUCTION_BLOB_STORE_ID: PROD };
-    // Preview pointing at the production store (by token or by OIDC store id): refused.
-    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview', BLOB_READ_WRITE_TOKEN: prodToken })).toThrow(/production Blob store/);
-    expect(() => loadConfig({ ...base, VERCEL_ENV: 'development', BLOB_STORE_ID: 'store_prodstore123' })).toThrow(/production Blob store/);
-    // Preview with its own store: fine.
-    expect(loadConfig({ ...base, VERCEL_ENV: 'preview', BLOB_READ_WRITE_TOKEN: previewToken }).publicUrl.origin).toBe('https://margin.example.com');
-    // Can't tell which store, or no production id configured: refused (fail closed).
-    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview' })).toThrow(/identify/);
-    expect(() => loadConfig({ ...ENV, VERCEL: '1', VERCEL_ENV: 'preview', BLOB_READ_WRITE_TOKEN: previewToken })).toThrow(/PRODUCTION_BLOB_STORE_ID/);
-    // Production itself and local runs (no VERCEL) are unaffected.
-    expect(loadConfig({ ...base, VERCEL_ENV: 'production', BLOB_READ_WRITE_TOKEN: prodToken })).toBeTruthy();
-    expect(loadConfig({ ...ENV, BLOB_READ_WRITE_TOKEN: prodToken })).toBeTruthy();
+  it('refuses the production GitHub store outside production (ADR 0014/0021)', () => {
+    const gh = { MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'lyonsv/margin-library' };
+    const base = { ...ENV, ...gh, VERCEL: '1', PRODUCTION_GITHUB_STORE: 'lyonsv/margin-library@main' };
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'preview', GITHUB_STORE_BRANCH: 'main' })).toThrow(/production store/);
+    expect(() => loadConfig({ ...base, VERCEL_ENV: 'development', GITHUB_STORE_REPO: 'LyonsV/Margin-Library', GITHUB_STORE_BRANCH: 'MAIN' })).toThrow(/production store/);
+    expect(loadConfig({ ...base, VERCEL_ENV: 'preview', GITHUB_STORE_BRANCH: 'preview' })).toBeTruthy();
+    // Without PRODUCTION_GITHUB_STORE outside production: refused (fail closed).
+    expect(() => loadConfig({ ...ENV, ...gh, GITHUB_STORE_BRANCH: 'preview', VERCEL: '1', VERCEL_ENV: 'preview' })).toThrow(/PRODUCTION_GITHUB_STORE/);
+    // Production itself, and local runs (no VERCEL), are unaffected.
+    expect(loadConfig({ ...base, VERCEL_ENV: 'production', GITHUB_STORE_BRANCH: 'main' })).toBeTruthy();
+    expect(loadConfig({ ...ENV, ...gh, GITHUB_STORE_BRANCH: 'main' })).toBeTruthy();
+  });
+
+  it('store config fails closed when incomplete', () => {
+    for (const patch of [
+      {},
+      { MARGIN_STORE: 'blob' },
+      { MARGIN_STORE: 'github' },
+      { MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'nope', GITHUB_STORE_BRANCH: 'b' },
+      { MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'o/r' },
+      { MARGIN_STORE: 'memory', VERCEL: '1' },
+    ]) {
+      expect(() => loadConfig({ ...ENV, MARGIN_STORE: undefined, ...patch }), JSON.stringify(patch)).toThrow(ConfigError);
+    }
+    expect(storeConfigFromEnv({ GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'o/r', GITHUB_STORE_BRANCH: 'preview' })).toMatchObject({ kind: 'github', repo: 'o/r' });
   });
 
   it('derives PUBLIC_URL from VERCEL_URL on previews only', () => {
@@ -131,91 +139,19 @@ describe('misc', () => {
     expect(r.hit('a')).toBe(true);
   });
 
-  it('refuses the memory store on Vercel and an unconfigured Blob store', () => {
-    expect(() => storeFromEnv({ MARGIN_STORE: 'memory', VERCEL: '1' })).toThrow();
-    expect(() => storeFromEnv({})).toThrow();
-    expect(storeFromEnv({ MARGIN_STORE: 'memory' })).toBeTruthy();
+  it('storeFromEnv never throws at startup; a misconfigured store fails every call with ConfigError', async () => {
+    const bad = storeFromEnv({ MARGIN_STORE: 'memory', VERCEL: '1' });
+    await expect(bad.get('k')).rejects.toBeInstanceOf(ConfigError);
+    await expect(storeFromEnv({}).put('k', 'v')).rejects.toBeInstanceOf(ConfigError);
+    expect(storeFromEnv({ MARGIN_STORE: 'memory' })).toBeInstanceOf((await import('../src/store')).MemoryStore);
+    expect(storeFromEnv({ MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'o/r', GITHUB_STORE_BRANCH: 'preview' })).toBeInstanceOf(
+      (await import('../src/githubStore')).GitHubStore,
+    );
   });
 });
 
-describe('BlobStore', () => {
-  function fakeClient() {
-    const calls: Array<{ op: string; args: unknown[] }> = [];
-    const client = {
-      get: async (...args: unknown[]) => {
-        calls.push({ op: 'get', args });
-        return args[0] === 'missing'
-          ? null
-          : { statusCode: 200, stream: new Response('{"a":1}').body, headers: new Headers(), blob: { etag: '"e1"' } };
-      },
-      put: async (...args: unknown[]) => {
-        calls.push({ op: 'put', args });
-        if ((args[2] as { ifMatch?: string }).ifMatch === '"stale"') throw new BlobPreconditionFailedError();
-        return { etag: '"e2"' };
-      },
-      del: async (...args: unknown[]) => void calls.push({ op: 'del', args }),
-      list: async (...args: unknown[]) => {
-        calls.push({ op: 'list', args });
-        const cursor = (args[0] as { cursor?: string }).cursor;
-        return cursor
-          ? { blobs: [{ pathname: 'auth/b' }], hasMore: false }
-          : { blobs: [{ pathname: 'auth/a' }], hasMore: true, cursor: 'c1' };
-      },
-    } as unknown as BlobClient;
-    return { client, calls };
-  }
-
-  it('reads privately, bypassing the CDN cache', async () => {
-    const { client, calls } = fakeClient();
-    const s = new BlobStore(client);
-    expect(await s.get('k')).toEqual({ value: '{"a":1}', etag: '"e1"' });
-    expect(await s.get('missing')).toBeNull();
-    expect(calls[0]!.args[1]).toEqual({ access: 'private', useCache: false });
-  });
-
-  it('maps ifMatch / create to Blob options and precondition errors to ours', async () => {
-    const { client, calls } = fakeClient();
-    const s = new BlobStore(client);
-    await s.put('k', 'v', { ifMatch: '"e1"' });
-    expect(calls[0]!.args[2]).toMatchObject({ access: 'private', ifMatch: '"e1"', allowOverwrite: true, addRandomSuffix: false });
-    await s.put('k', 'v', { create: true });
-    expect(calls[1]!.args[2]).toMatchObject({ allowOverwrite: false });
-    expect((calls[1]!.args[2] as Record<string, unknown>).ifMatch).toBeUndefined();
-    await expect(s.put('k', 'v', { ifMatch: '"stale"' })).rejects.toBeInstanceOf(PreconditionFailedError);
-  });
-
-  it('maps real Blob conditional failures (generic BlobErrors) to PreconditionFailedError by checking the key', async () => {
-    const make = (exists: boolean) =>
-      new BlobStore({
-        put: async () => {
-          throw new BlobError(exists ? 'This blob already exists' : 'The specified key does not exist.');
-        },
-        head: async () => {
-          if (!exists) throw new BlobNotFoundError();
-          return { etag: '"e"' };
-        },
-      } as unknown as BlobClient);
-    // create-only on an existing key (observed on real Blob)
-    await expect(make(true).put('k', 'v', { create: true })).rejects.toBeInstanceOf(PreconditionFailedError);
-    // ifMatch on a deleted key (observed on real Blob)
-    await expect(make(false).put('k', 'v', { ifMatch: '"e"' })).rejects.toBeInstanceOf(PreconditionFailedError);
-    await expect(make(false).putBytes('k', new Uint8Array([1]), { ifMatch: '"e"' })).rejects.toBeInstanceOf(PreconditionFailedError);
-    // A losing concurrent write ("conflicting operation"): the key moved on to another ETag.
-    const moved = new BlobStore({
-      put: async () => {
-        throw new BlobError('The conditional request cannot succeed due to a conflicting operation against this resource.');
-      },
-      head: async () => ({ etag: '"winner"' }),
-    } as unknown as BlobClient);
-    await expect(moved.put('k', 'v', { ifMatch: '"e"' })).rejects.toBeInstanceOf(PreconditionFailedError);
-    // Errors that don't contradict the condition are real errors (ifMatch "e" still current).
-    await expect(make(false).put('k', 'v', { create: true })).rejects.toBeInstanceOf(BlobError);
-    await expect(make(false).put('k', 'v', { create: true })).rejects.not.toBeInstanceOf(PreconditionFailedError);
-    await expect(make(true).put('k', 'v')).rejects.not.toBeInstanceOf(PreconditionFailedError);
-    await expect(make(true).put('k', 'v', { ifMatch: '"e"' })).rejects.not.toBeInstanceOf(PreconditionFailedError);
-  });
-
-  it('MemoryStore ETags are content-derived, like real Blob', async () => {
+describe('MemoryStore', () => {
+  it('ETags are content-derived, like the GitHub store (git blob shas)', async () => {
     const { MemoryStore } = await import('../src/store');
     const m = new MemoryStore();
     const a = await m.put('k', 'same');
@@ -223,19 +159,6 @@ describe('BlobStore', () => {
     const c = await m.put('k', 'same');
     expect(a.etag).toBe(c.etag);
     expect(a.etag).not.toBe(b.etag);
-  });
-
-  it('normalises weak ETags from get() (real Blob, compressed responses) so CAS can match', async () => {
-    const s = new BlobStore({
-      get: async () => ({ statusCode: 200, stream: new Response('{"big":1}').body, headers: new Headers(), blob: { etag: 'W/"abc"' } }),
-    } as unknown as BlobClient);
-    expect((await s.get('k'))!.etag).toBe('"abc"');
-    expect((await s.getBytes('k'))!.etag).toBe('"abc"');
-  });
-
-  it('lists across pages', async () => {
-    const { client } = fakeClient();
-    expect(await new BlobStore(client).list('auth/')).toEqual(['auth/a', 'auth/b']);
   });
 });
 
@@ -268,6 +191,7 @@ describe('ALLOW_NATIVE_SCHEME_REDIRECT (dev-only margin:// redirect)', () => {
     GITHUB_CLIENT_SECRET: 'secret',
     ALLOWED_GITHUB_LOGINS: 'lyonsv:1',
     AUTH_SECRET: 'x'.repeat(40),
+    MARGIN_STORE: 'memory',
   };
   it('is off unless set to 1', () => {
     expect(loadConfig(base).allowNativeSchemeRedirect).toBe(false);
@@ -275,6 +199,9 @@ describe('ALLOW_NATIVE_SCHEME_REDIRECT (dev-only margin:// redirect)', () => {
     expect(loadConfig({ ...base, ALLOW_NATIVE_SCHEME_REDIRECT: '1' }).allowNativeSchemeRedirect).toBe(true);
   });
   it('fails closed in Production', () => {
-    expect(() => loadConfig({ ...base, ALLOW_NATIVE_SCHEME_REDIRECT: '1', VERCEL: '1', VERCEL_ENV: 'production' })).toThrow(ConfigError);
+    // A valid production store, so the only reason to fail is the dev-only redirect flag.
+    const prodStore = { MARGIN_STORE: 'github', GITHUB_STORE_TOKEN: 't', GITHUB_STORE_REPO: 'o/r', GITHUB_STORE_BRANCH: 'main' };
+    expect(loadConfig({ ...base, ...prodStore, VERCEL: '1', VERCEL_ENV: 'production' })).toBeTruthy();
+    expect(() => loadConfig({ ...base, ...prodStore, ALLOW_NATIVE_SCHEME_REDIRECT: '1', VERCEL: '1', VERCEL_ENV: 'production' })).toThrow(ConfigError);
   });
 });

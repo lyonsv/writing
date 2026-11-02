@@ -164,12 +164,12 @@ export class SyncRepository {
   private async storeObject(bytes: Uint8Array): Promise<string> {
     if (bytes.length > MAX_DOCUMENT_BYTES) throw new SyncLimitError('document too large');
     const hash = sha256Hex(bytes);
-    if (await this.store.getBytes(objectKey(hash))) return hash; // same content already stored
+    // Content-addressed: create-only, and "already exists" means the same bytes are
+    // already stored. One write instead of read-then-write (each call counts on GitHub).
     try {
       await this.store.putBytes(objectKey(hash), bytes, { create: true });
     } catch (error) {
-      // Someone stored identical content concurrently: fine. Anything else is real.
-      if (!(await this.store.getBytes(objectKey(hash)))) throw error;
+      if (!(error instanceof PreconditionFailedError)) throw error;
     }
     return hash;
   }

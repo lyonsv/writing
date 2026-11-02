@@ -87,32 +87,53 @@ function publicUrlFrom(env: Record<string, string | undefined>): string {
   throw new ConfigError('PUBLIC_URL is not set');
 }
 
-/** The Blob store id a deployment's credentials point at, without the `store_` prefix (lowercase). */
-export function blobStoreIdFromEnv(env: Record<string, string | undefined>): string | undefined {
-  const explicit = env.BLOB_STORE_ID?.trim();
-  if (explicit) return explicit.replace(/^store_/i, '').toLowerCase();
-  // Read-write tokens embed the store id: vercel_blob_rw_<storeId>_<secret>.
-  const m = /^vercel_blob_rw_([A-Za-z0-9]+)_/.exec(env.BLOB_READ_WRITE_TOKEN?.trim() ?? '');
-  return m ? m[1]!.toLowerCase() : undefined;
+/** Where the server keeps its data (ADR 0021). */
+export type StoreConfig =
+  | { kind: 'memory' }
+  | { kind: 'github'; token: string; repo: string; branch: string };
+
+/**
+ * `MARGIN_STORE=github|memory` (default: github when `GITHUB_STORE_TOKEN` is set).
+ * GitHub needs `GITHUB_STORE_TOKEN` (fine-grained PAT, Contents read/write on one
+ * repo), `GITHUB_STORE_REPO` (`owner/name`) and `GITHUB_STORE_BRANCH`. Memory is for
+ * local dev and tests only and is refused on Vercel (each instance would be empty).
+ */
+export function storeConfigFromEnv(env: Record<string, string | undefined>): StoreConfig {
+  const kind = env.MARGIN_STORE?.trim() || (env.GITHUB_STORE_TOKEN ? 'github' : '');
+  if (kind === 'memory') {
+    if (env.VERCEL) throw new ConfigError('MARGIN_STORE=memory is not allowed on Vercel');
+    return { kind: 'memory' };
+  }
+  if (kind !== 'github') throw new ConfigError('MARGIN_STORE must be github or memory');
+  const token = env.GITHUB_STORE_TOKEN?.trim();
+  const repo = env.GITHUB_STORE_REPO?.trim();
+  const branch = env.GITHUB_STORE_BRANCH?.trim();
+  if (!token) throw new ConfigError('GITHUB_STORE_TOKEN is not set');
+  if (!repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new ConfigError('GITHUB_STORE_REPO must be owner/name');
+  if (!branch || !/^[A-Za-z0-9._/-]{1,100}$/.test(branch)) throw new ConfigError('GITHUB_STORE_BRANCH is not set');
+  return { kind: 'github', token, repo, branch };
 }
 
 /**
- * Previews and development must never touch the production Blob store (ADR
- * 0014): untested branch code could corrupt real documents. On Vercel, outside
- * production, we require PRODUCTION_BLOB_STORE_ID and refuse to run if our own
- * Blob credentials point at that store (or can't be identified).
+ * Previews and development must never write to production data (ADR 0014,
+ * 0021): untested branch code could corrupt real documents. On Vercel, outside
+ * production, `PRODUCTION_GITHUB_STORE` (`owner/repo@branch`, e.g.
+ * `lyonsv/margin-library@main`) is required and the server refuses to run if its
+ * own GitHub store is that repo and branch.
  */
-export function assertNotProductionStore(env: Record<string, string | undefined>): void {
+export function assertNotProductionStore(env: Record<string, string | undefined>, store: StoreConfig): void {
   if (!env.VERCEL || env.VERCEL_ENV === 'production') return;
-  const prod = env.PRODUCTION_BLOB_STORE_ID?.trim().replace(/^store_/i, '').toLowerCase();
-  if (!prod) throw new ConfigError('PRODUCTION_BLOB_STORE_ID is not set (required outside production)');
-  const mine = blobStoreIdFromEnv(env);
-  if (!mine) throw new ConfigError('cannot identify this deployment’s Blob store');
-  if (mine === prod) throw new ConfigError(`refusing to use the production Blob store in ${env.VERCEL_ENV ?? 'this'} environment`);
+  const prod = env.PRODUCTION_GITHUB_STORE?.trim().toLowerCase();
+  if (!prod || !/^[^@\s]+\/[^@\s]+@[^@\s]+$/.test(prod)) {
+    throw new ConfigError('PRODUCTION_GITHUB_STORE (owner/repo@branch) is not set (required outside production)');
+  }
+  if (store.kind === 'github' && `${store.repo}@${store.branch}`.toLowerCase() === prod) {
+    throw new ConfigError(`refusing to use the production store in the ${env.VERCEL_ENV ?? 'current'} environment`);
+  }
 }
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
-  assertNotProductionStore(env);
+  assertNotProductionStore(env, storeConfigFromEnv(env));
   const publicUrl = httpsOrLoopback(publicUrlFrom(env), 'PUBLIC_URL');
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username) {
     throw new ConfigError('PUBLIC_URL must be an origin only, e.g. https://margin.example.com');

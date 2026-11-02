@@ -1,101 +1,68 @@
-import { pkceChallenge, randomToken, safeEqual, type Pepper } from './crypto.js';
-import { PreconditionFailedError, type KeyValueStore } from './store.js';
+import { pkceChallenge, randomToken, safeEqual, type Sealer } from './crypto.js';
 import type { Identity } from './devices.js';
+import type { UsedSet } from './usedSet.js';
 
 /**
- * One-time authorization codes for the native flow (ADR 0011).
+ * One-time authorization codes for the native flow (ADR 0011; storage ADR 0021).
  *
  * The server hands the app a code on its redirect; the app trades it, plus the
- * PKCE verifier only it holds, for a device token. Codes:
- * - are 256-bit random, stored only as SHA-256 (`auth/codes/<hash>.json`);
- * - expire after CODE_TTL_MS;
- * - are bound to the redirect URI and the app's S256 challenge;
- * - are single-use, even under concurrent redemption: the redeemer marks the
- *   record used with a conditional write on the ETag it read, so exactly one
- *   of several racing redeemers wins. Any redemption attempt burns the code,
- *   including one with the wrong verifier.
+ * PKCE verifier only it holds, for a device token. A code is **sealed**
+ * (AES-256-GCM under a key derived from AUTH_SECRET for this purpose only), so
+ * it carries its own identity, challenge, redirect URI, device name and expiry,
+ * and nothing is stored when it is issued. Single use is enforced by the shared
+ * `UsedSet` (one small record). Any redemption attempt burns the code,
+ * including one with the wrong verifier, and concurrent redemptions have
+ * exactly one winner.
  */
 export const CODE_TTL_MS = 60_000;
-const PREFIX = 'auth/codes/';
 
-interface CodeRecord {
+interface SealedCode {
   v: 1;
+  /** Random id, the single-use key. */
+  id: string;
   githubId: number;
   login: string;
   challenge: string;
   redirectUri: string;
-  /** Device name the user confirmed on the server's page; becomes the device's name. */
   deviceName?: string;
-  expiresAt: number;
-  usedAt?: number;
+  exp: number;
 }
 
 export type RedeemResult = { ok: true; identity: Identity; deviceName?: string } | { ok: false };
 
 export class CodeRepository {
   constructor(
-    private readonly store: KeyValueStore,
-    /** Keyed hash (HMAC under AUTH_SECRET) for code storage keys. */
-    private readonly pepper: Pick<Pepper, 'hash'>,
+    private readonly sealer: Sealer,
+    private readonly used: UsedSet,
     private readonly now: () => number = Date.now,
   ) {}
 
   async issue(identity: Identity, challenge: string, redirectUri: string, deviceName?: string): Promise<string> {
-    const code = randomToken(32);
-    const record: CodeRecord = {
+    const code: SealedCode = {
       v: 1,
+      id: randomToken(16),
       githubId: identity.githubId,
       login: identity.login,
       challenge,
       redirectUri,
       ...(deviceName ? { deviceName } : {}),
-      expiresAt: this.now() + CODE_TTL_MS,
+      exp: this.now() + CODE_TTL_MS,
     };
-    await this.store.put(`${PREFIX}${this.pepper.hash(code)}.json`, JSON.stringify(record), { create: true });
-    return code;
+    return this.sealer.seal(code);
   }
 
   async redeem(code: string, verifier: string, redirectUri: string): Promise<RedeemResult> {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(code)) return { ok: false };
-    const k = `${PREFIX}${this.pepper.hash(code)}.json`;
-    const item = await this.store.get(k);
-    if (!item) return { ok: false };
-    let record: CodeRecord;
-    try {
-      record = JSON.parse(item.value) as CodeRecord;
-    } catch {
-      return { ok: false };
-    }
-    if (record.usedAt !== undefined) return { ok: false };
-    const t = this.now();
-    try {
-      await this.store.put(k, JSON.stringify({ ...record, usedAt: t }), { ifMatch: item.etag });
-    } catch (error) {
-      if (error instanceof PreconditionFailedError) return { ok: false }; // lost the race
-      throw error;
-    }
-    // Burned. The record stays as a "used" marker until it is cleaned up after expiry.
+    if (!/^[A-Za-z0-9_-]{40,2048}$/.test(code)) return { ok: false };
+    const record = this.sealer.unseal(code) as SealedCode | null;
+    if (!record || record.v !== 1 || typeof record.id !== 'string') return { ok: false };
+    // Burn first: whatever happens next, this code is spent.
+    if (!(await this.used.use(`code:${record.id}`, record.exp))) return { ok: false };
     const valid =
-      record.expiresAt > t &&
+      record.exp > this.now() &&
       safeEqual(record.redirectUri, redirectUri) &&
       safeEqual(record.challenge, pkceChallenge(verifier));
     return valid
       ? { ok: true, identity: { githubId: record.githubId, login: record.login }, deviceName: record.deviceName }
       : { ok: false };
-  }
-
-  /** Deletes codes that expired more than a minute ago (used or not). Cheap; called opportunistically. */
-  async sweep(): Promise<void> {
-    const t = this.now();
-    for (const k of await this.store.list(PREFIX)) {
-      const item = await this.store.get(k);
-      if (!item) continue;
-      try {
-        const r = JSON.parse(item.value) as CodeRecord;
-        if (r.expiresAt + 60_000 < t) await this.store.delete(k);
-      } catch {
-        await this.store.delete(k);
-      }
-    }
   }
 }

@@ -1,6 +1,6 @@
 # 0012. Token storage: hashed device records in private Vercel Blob; safeStorage on desktop
 
-- **Status:** Accepted
+- **Status:** Accepted (storage on Vercel Blob **superseded by [ADR 0021](0021-github-storage.md)**: a private GitHub repository)
 - **Date:** 2026-11-02
 
 ## Context

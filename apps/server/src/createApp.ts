@@ -6,7 +6,7 @@ import { HTTPException } from 'hono/http-exception';
 import { matchedRoutes } from 'hono/route';
 
 import { CodeRepository } from './codes.js';
-import { NonceRepository } from './nonces.js';
+import { UsedSet } from './usedSet.js';
 import { MAX_DOCUMENT_BYTES, SyncConflictError, SyncLimitError, SyncRepository, type Precondition, type SyncEntry } from './sync.js';
 import { isSyncPath } from './syncPaths.js';
 import { ConfigError, isAllowed, type Config } from './config.js';
@@ -158,17 +158,16 @@ export function createApp(deps: AppDeps): Hono<Env> {
   // Built with the config: their hashes are keyed by AUTH_SECRET.
   let devices!: DeviceRepository;
   let codes!: CodeRepository;
-  let states!: NonceRepository;
-  let confirms!: NonceRepository;
+  /** Single-use marks for OAuth state, confirm tokens and codes (one record; ADR 0021). */
+  let used!: UsedSet;
   const getConfig = (): Config => {
     if (!config) {
       config = typeof deps.config === 'function' ? deps.config() : deps.config;
       sealer = new Sealer(config.authSecret);
       const pepper = new Pepper(config.authSecret);
       devices = new DeviceRepository(deps.store, pepper, now);
-      codes = new CodeRepository(deps.store, pepper, now);
-      states = new NonceRepository(deps.store, 'auth/states/', pepper.hash, now);
-      confirms = new NonceRepository(deps.store, 'auth/confirms/', pepper.hash, now);
+      used = new UsedSet(deps.store, pepper.hash, now);
+      codes = new CodeRepository(new Sealer(config.authSecret, 'one-time-code v1'), used, now);
     }
     return config;
   };
@@ -304,8 +303,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   const startGitHub = async (c: Context, pending: Omit<PendingSignIn, 's' | 'v' | 'exp'>) => {
     const cfg = getConfig();
     const s = randomToken(32);
-    // Single-use server-side too (burned at the callback), not only via the cookie.
-    await states.issue(s, OAUTH_COOKIE_TTL_S * 1000);
+    // Single use is enforced at the callback (UsedSet), not by storing anything now.
     const v = randomToken(48);
     const sealed = sealer!.seal({ ...pending, s, v, exp: now() + OAUTH_COOKIE_TTL_S * 1000 } satisfies PendingSignIn);
     setCookie(c, cookieNames().oauth, sealed, { ...cookieBase(), maxAge: OAUTH_COOKIE_TTL_S });
@@ -347,8 +345,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
         : 'a Mac app (Margin on this computer, returning to 127.0.0.1)';
     const dn = cleanDeviceName(q.device_name);
     const csrf = randomToken(24);
-    // Single-use on the server too, so a captured confirm cookie can't be replayed.
-    await confirms.issue(csrf, OAUTH_COOKIE_TTL_S * 1000);
+    // Single use is enforced at the POST (UsedSet), so a captured confirm cookie can't be replayed.
     const sealed = sealer!.seal({ ru, cc, cs, dn, csrf, exp: now() + OAUTH_COOKIE_TTL_S * 1000 } satisfies PendingConfirm);
     setCookie(c, cookieNames().confirm, sealed, { ...cookieBase(), maxAge: OAUTH_COOKIE_TTL_S });
     c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
@@ -387,7 +384,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       c.req.header('Origin') !== cfg.publicUrl.origin ||
       !safeEqual(pending.csrf, csrf) ||
       !isAllowedNativeRedirect(pending.ru, { allowCustomScheme: cfg.allowNativeSchemeRedirect === true }) ||
-      !(await confirms.burn(pending.csrf))
+      !(await used.use(`confirm:${pending.csrf}`, pending.exp))
     ) {
       log('signin.bad_confirm');
       return page(c, 400, 'Sign-in expired', 'This sign-in page has expired or was already used. Start again from the app.');
@@ -398,7 +395,6 @@ export function createApp(deps: AppDeps): Hono<Env> {
       back.searchParams.set('state', pending.cs);
       return c.redirect(back.toString(), 302);
     }
-    await confirms.sweep().catch(() => undefined);
     return startGitHub(c, { flow: 'native', ru: pending.ru, cc: pending.cc, cs: pending.cs, dn: pending.dn });
   });
 
@@ -420,7 +416,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       typeof pending.s !== 'string' ||
       pending.exp <= now() ||
       !safeEqual(pending.s, state) ||
-      !(await states.burn(pending.s))
+      !(await used.use(`state:${pending.s}`, pending.exp))
     ) {
       log('signin.bad_state');
       return page(c, 400, 'Sign-in expired', 'This sign-in link has expired or was already used. Start again from the app.');
@@ -457,13 +453,10 @@ export function createApp(deps: AppDeps): Hono<Env> {
     if (pending.flow === 'native') {
       const oneTime = await codes.issue(identity, pending.cc!, pending.ru!, pending.dn);
       log('signin.code_issued', { githubId: identity.githubId });
-      await codes.sweep().catch(() => undefined);
-      await states.sweep().catch(() => undefined);
       return backToApp({ code: oneTime });
     }
     const ua = c.req.header('User-Agent') ?? '';
     const browser = /Firefox\//.test(ua) ? 'Firefox' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
-    await states.sweep().catch(() => undefined);
     const { token } = await devices.create(identity, `Web (${browser})`, 'web');
     setCookie(c, names.session, token, { ...cookieBase(), maxAge: Math.floor(TOKEN_TTL_MS / 1000) });
     log('signin.web_session', { githubId: identity.githubId });

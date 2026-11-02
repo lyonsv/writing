@@ -10,6 +10,7 @@ import { sha256Hex } from '../src/crypto';
 import { TOKEN_TTL_MS } from '../src/devices';
 import { CUSTOM_SCHEME_REDIRECT, safeReturnPath } from '../src/redirects';
 import { MemoryStore } from '../src/store';
+import { testStore } from './testStore';
 import {
   Jar,
   LOOPBACK,
@@ -34,7 +35,9 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     expect(a.location!.origin + a.location!.pathname).toBe(LOOPBACK);
     expect(a.location!.searchParams.get('state')).toBe(a.appState);
     const code = a.location!.searchParams.get('code')!;
-    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    // Sealed (AES-GCM under AUTH_SECRET): opaque, self-describing, nothing stored at issue (ADR 0021).
+    expect(code).toMatch(/^[A-Za-z0-9_-]{40,2048}$/);
+    expect(await h.store.list('auth/codes/')).toEqual([]);
 
     // The name confirmed on the server's page wins over what the client sends at exchange.
     const res = await exchange(h, { code, code_verifier: a.verifier, redirect_uri: LOOPBACK, device_name: 'Something else' });
@@ -79,6 +82,21 @@ describe('native sign-in (RFC 8252 + PKCE)', () => {
     for (const s of [ghToken, token, secret, a.location!.searchParams.get('code')!, a.githubCode!, a.githubState!, a.appState]) {
       expect(logged).not.toContain(s);
     }
+  });
+
+  it('rejects forged, tampered and cross-purpose codes', async () => {
+    const h = setup();
+    const a = await nativeAuthorize(h);
+    const code = a.location!.searchParams.get('code')!;
+    const tampered = code.slice(0, -2) + (code.endsWith('AA') ? 'BB' : 'AA');
+    // A value sealed with the same secret but for another purpose (the OAuth state cookie key).
+    const { Sealer } = await import('../src/crypto');
+    const cross = new Sealer('x'.repeat(48)).seal({ v: 1, id: 'x', githubId: OWNER.id, login: OWNER.login, challenge: s256(a.verifier), redirectUri: LOOPBACK, exp: Date.now() + 60_000 });
+    for (const bad of [tampered, cross, 'C'.repeat(43), `${code}x`]) {
+      expect((await exchange(h, { code: bad, code_verifier: a.verifier, redirect_uri: LOOPBACK })).status, bad.slice(0, 12)).toBe(400);
+    }
+    // The genuine code still works (forgeries didn't burn it).
+    expect((await exchange(h, { code, code_verifier: a.verifier, redirect_uri: LOOPBACK })).status).toBe(200);
   });
 
   it('rejects a reused one-time code', async () => {
@@ -622,7 +640,7 @@ describe('the auth gate', () => {
   });
 
   it('cuts off existing devices when the user is removed from the allowlist', async () => {
-    const store = new MemoryStore();
+    const store = testStore();
     const { MockGitHub, testConfig } = await import('./helpers');
     const gh = new MockGitHub();
     let config = testConfig();

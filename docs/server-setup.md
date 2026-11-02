@@ -35,8 +35,11 @@ Every variable is listed in `.env.example`.
 | `GITHUB_CLIENT_SECRET` | yes | Secret. Vercel env vars or `apps/server/.env.local` only. |
 | `ALLOWED_GITHUB_LOGINS` | yes | `lyonsv:1234567`, a comma-separated list of `login:id` pairs. Both must match. |
 | `AUTH_SECRET` | yes | ≥ 32 random characters: `openssl rand -base64 48`. Seals the sign-in cookies and keys the stored token/code hashes (HMAC). **Rotating it signs out every device and web session** (ADR 0012). |
-| `BLOB_STORE_ID` | prod | Injected by Vercel when a Blob store is connected (with `VERCEL_OIDC_TOKEN`). |
-| `BLOB_READ_WRITE_TOKEN` | optional | Only to use a real Blob store from a local machine. |
+| `MARGIN_STORE` | yes | `github` on Vercel (`memory` only for local dev; refused on Vercel). |
+| `GITHUB_STORE_TOKEN` | prod/preview | Fine-grained PAT: **only** your storage repo, **Contents: Read and write**. Sensitive. |
+| `GITHUB_STORE_REPO` | prod/preview | `owner/name` of the **private** storage repo, e.g. `lyonsv/margin-library`. |
+| `GITHUB_STORE_BRANCH` | prod/preview | `main` for Production, `preview` for Preview. Never `main` outside Production. |
+| `PRODUCTION_GITHUB_STORE` | preview | `owner/name@main`: previews refuse to run against it (ADR 0021). |
 | `MARGIN_STORE` | local | `memory` for local dev (refused on Vercel). |
 | `PORT` | local | Dev server port (default 3000). |
 | `GITHUB_OAUTH_URL`, `GITHUB_API_URL` | tests only | Point at a mock GitHub. Leave unset. |
@@ -67,8 +70,8 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
 |---|---|
 | Project | `margin-sync` (scope `vincent-lyons-projects-fe5e48fc`): Root Directory `apps/server`, framework Hono, Node 24.x, Fluid Compute, region iad1 |
 | Production alias | `https://margin-sync.vercel.app` |
-| Blob stores | `margin-store` (`store_wIWFdLVUkOUhtb05`, **private**, iad1): **Production only**. `margin-store-preview` (`store_RCqGVGmwoZxS2m4D`, private): **Preview + Development**. Each injects its own `BLOB_READ_WRITE_TOKEN` |
-| `PRODUCTION_BLOB_STORE_ID` | `store_wIWFdLVUkOUhtb05` in all environments: previews refuse to run against the production store (ADR 0014) |
+| Storage | private GitHub repo `lyonsv/margin-library` (ADR 0021): branch `main` for Production, `preview` for Preview. Fine-grained PAT (`GITHUB_STORE_TOKEN`, this repo only, Contents read/write) in both environments. The old Vercel Blob stores are suspended and no longer used |
+| `MARGIN_STORE`, `PRODUCTION_GITHUB_STORE` | Preview: `github`, `lyonsv/margin-library@main` |
 | `AUTH_SECRET` | random, sensitive, **different** for Production and Preview (never displayed) |
 | `ALLOWED_GITHUB_LOGINS` | `lyonsv:2531232` (Production, Preview) |
 | `PUBLIC_URL` | `https://margin-sync.vercel.app` (Production). Preview: unset, derived from `VERCEL_URL` |
@@ -93,11 +96,32 @@ Config and reasoning: ADR 0014. Everything below was set up on 2026-11-02 with t
 
 **Sync errors** ("the server's copy … is older than this Mac's"): see [sync-recovery.md](sync-recovery.md).
 
-**Checking real-Blob behaviour** (no deploy needed): `pnpm --filter @margin/server verify:blob`. It pulls the Preview env (so it uses the **preview** store, never production) into the git-ignored `apps/server/.env.blob.local`, runs every storage assumption against the real store under a throwaway prefix (10 parallel writers for the CAS checks), and deletes what it wrote. Expect `19/19 checks passed`.
+**Checking the real GitHub store** (no deploy needed): put `GITHUB_STORE_TOKEN`, `GITHUB_STORE_REPO` and `GITHUB_STORE_BRANCH=preview` in the git-ignored `apps/server/.env.verify`, then run `pnpm --filter @margin/server verify:github`. It refuses any branch but `preview`, makes at most 90 API calls, and deletes what it wrote. Expect `6/6 checks passed`.
+
+### Storage repo for a self-hosted server (ADR 0021)
+1. Create a **private** repository, e.g. `margin-library`, with a first commit (GitHub's "Add a README" is enough). Then create a branch `preview` from `main`.
+2. GitHub › Settings › Developer settings › **Fine-grained personal access tokens** › Generate:
+   - **Repository access:** *Only select repositories* → `margin-library`.
+   - **Permissions:** *Contents: Read and write*. Nothing else (Metadata: read-only is added automatically).
+   - **Expiration:** your choice. When it expires, the server fails closed until you set a new one.
+3. Store it without echoing it:
+   ```sh
+   npx vercel@latest env add GITHUB_STORE_TOKEN production --sensitive
+   npx vercel@latest env add GITHUB_STORE_TOKEN preview --sensitive
+   ```
+   Then set the rest:
+
+   | Variable | Production | Preview |
+   |---|---|---|
+   | `GITHUB_STORE_REPO` | `<you>/margin-library` | `<you>/margin-library` |
+   | `GITHUB_STORE_BRANCH` | `main` | `preview` |
+   | `MARGIN_STORE` | `github` | `github` |
+   | `PRODUCTION_GITHUB_STORE` | — | `<you>/margin-library@main` |
+4. The repo is your backup: every sync and sign-in write is a commit (`margin: … [skip ci]`). Keep it private. Anyone who can read it can read your documents (but not mint sign-in tokens; those are stored as HMACs).
 
 ## Revoking a device
 - **From the app:** Margin › Account and Devices… › **Revoke** (click twice to confirm). Revoking the device you're on signs it out. Margin › Sign Out revokes the current device.
 - **Lost all devices:** sign in again on any machine (a new device), then revoke the old ones. To cut off *everything* immediately, remove your entry from `ALLOWED_GITHUB_LOGINS` and redeploy: every request is re-checked against the allowlist. Put it back and sign in again afterwards.
-- **By hand:** in the Blob store, delete `auth/devices/<id>.json` (or the whole `auth/devices/` prefix). With the API: `curl -X DELETE -H "Authorization: Bearer <a valid token>" https://<domain>/api/devices/<id>`.
+- **By hand:** in the storage repo (branch `main`), delete `auth/devices/<id>.json` (or the whole `auth/devices/` folder) and commit. With the API: `curl -X DELETE -H "Authorization: Bearer <a valid token>" https://<domain>/api/devices/<id>`.
 
 Tokens expire 90 days after their last use.

@@ -8,11 +8,10 @@
     "dev": "tsx watch src/dev.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify:blob": "tsx scripts/verify-blob.ts",
-    "build:web": "pnpm --filter @margin/app export:web && node scripts/stage-web.mjs"
+    "build:web": "pnpm --filter @margin/app export:web && node scripts/stage-web.mjs",
+    "verify:github": "tsx scripts/verify-github.ts"
   },
   "dependencies": {
-    "@vercel/blob": "2.8.2",
     "hono": "4.13.16"
   },
   "devDependencies": {

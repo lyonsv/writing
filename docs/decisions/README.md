@@ -15,8 +15,8 @@ One file per decision: `NNNN-title.md` with **Status**, **Context**, **Decision*
 | [0009](0009-library-ui.md) | Library UI: sidebar, quick open, shortcuts (amended: keyboard navigation, byte-length names) | Accepted |
 | [0010](0010-auth-model.md) | Authentication model: GitHub sign-in, allowlist on login+id, device tokens, one auth gate, Hono | Accepted |
 | [0011](0011-native-redirect.md) | Native sign-in: loopback redirect on desktop, `margin://` on iOS | Accepted |
-| [0012](0012-token-storage.md) | Token storage: hashed device records in private Vercel Blob; `safeStorage` on desktop (amended: HMAC pepper) | Accepted |
-| [0013](0013-sync.md) | Sync: manifest CAS on private Blob, three-way engine in core, guarded desktop client | Accepted |
+| [0012](0012-token-storage.md) | Token storage: hashed device records; `safeStorage` on desktop (amended: HMAC pepper). Blob storage parts superseded by 0021 | Accepted |
+| [0013](0013-sync.md) | Sync: manifest CAS, three-way engine in core, guarded desktop client. Blob specifics superseded by 0021 | Accepted |
 | [0014](0014-vercel-deploy.md) | Vercel deployment: project settings, `vercel.json`, environments, protection | Accepted |
 | [0015](0015-ios-storage.md) | iOS storage: library in the app's Documents, atomic writes, Recently Deleted instead of a Trash | Accepted |
 | [0016](0016-ios-editor-keyboard.md) | iOS editor: keyboard and accessory bar, inline Plex Mono, Dynamic Type, Expo Router stack | Accepted |

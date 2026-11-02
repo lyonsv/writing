@@ -1,21 +1,23 @@
-import { BlobStore } from './blobStore.js';
+import { ConfigError, storeConfigFromEnv } from './config.js';
+import { GitHubStore } from './githubStore.js';
 import { MemoryStore, type KeyValueStore } from './store.js';
 
 /**
- * Picks the storage backend:
- * - `MARGIN_STORE=memory` → in-memory (local dev and tests only; refused on Vercel,
- *   where each instance would get its own empty store).
- * - otherwise Vercel Blob (private store). On Vercel, `BLOB_STORE_ID` and the
- *   OIDC token are injected when the store is connected to the project; locally,
- *   `BLOB_READ_WRITE_TOKEN` works too.
+ * The storage backend from the environment (ADR 0021): a private GitHub repo
+ * (`MARGIN_STORE=github`) or memory (local dev and tests). It never throws at
+ * startup: an incomplete configuration yields a store whose every call fails
+ * with the ConfigError, and `loadConfig` reports the same error first, so the
+ * server answers every request with the generic 500 instead of crashing.
  */
 export function storeFromEnv(env: Record<string, string | undefined> = process.env): KeyValueStore {
-  if (env.MARGIN_STORE === 'memory') {
-    if (env.VERCEL) throw new Error('MARGIN_STORE=memory is not allowed on Vercel');
-    return new MemoryStore();
+  try {
+    const cfg = storeConfigFromEnv(env);
+    if (cfg.kind === 'memory') return new MemoryStore();
+    return new GitHubStore({ token: cfg.token, repo: cfg.repo, branch: cfg.branch });
+  } catch (error) {
+    const fail = async (): Promise<never> => {
+      throw error instanceof ConfigError ? error : new ConfigError(String(error));
+    };
+    return { get: fail, put: fail, delete: fail, list: fail, getBytes: fail, putBytes: fail };
   }
-  if (!env.BLOB_STORE_ID && !env.BLOB_READ_WRITE_TOKEN) {
-    throw new Error('No Blob store configured: connect a private Blob store, or set MARGIN_STORE=memory locally');
-  }
-  return new BlobStore();
 }

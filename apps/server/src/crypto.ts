@@ -73,8 +73,9 @@ export class Pepper {
 export class Sealer {
   private readonly key: Buffer;
 
-  constructor(secret: string) {
-    this.key = Buffer.from(hkdfSync('sha256', secret, 'margin', 'oauth-state-cookie v1', 32));
+  /** `purpose` separates keys, so a value sealed for one use can't be accepted as another. */
+  constructor(secret: string, purpose = 'oauth-state-cookie v1') {
+    this.key = Buffer.from(hkdfSync('sha256', secret, 'margin', purpose, 32));
   }
 
   seal(value: unknown): string {

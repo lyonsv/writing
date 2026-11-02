@@ -5,9 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import { MAX_DOCUMENT_BYTES, SyncRepository } from '../src/sync';
 import { foldPathCase, isSyncPath } from '../src/syncPaths';
-import { BlobStore } from '../src/blobStore';
 import { MemoryStore } from '../src/store';
-import { fakeBlobClient } from './fakeBlobClient';
+import { testStore } from './testStore';
 import { bearer, setup, signIn } from './helpers';
 
 const sha = (b: Uint8Array | string) => createHash('sha256').update(b).digest('hex');
@@ -201,32 +200,11 @@ describe('server and core agree on what is syncable', () => {
 describe('SyncRepository', () => {
   it('prunes tombstones after 90 days', async () => {
     let t = 0;
-    const repo = new SyncRepository(new MemoryStore(), () => t);
+    const repo = new SyncRepository(testStore(), () => t);
     const e = await repo.put('a.md', new TextEncoder().encode('x'), { ifNoneMatch: true });
     await repo.delete('a.md', e.rev);
     t += 91 * 24 * 60 * 60 * 1000;
     await repo.put('b.md', new TextEncoder().encode('y'), { ifNoneMatch: true });
     expect((await repo.manifest()).entries.map((x) => x.path)).toEqual(['b.md']);
-  });
-});
-
-describe('SyncRepository on Blob semantics (validator M5 MINOR 4)', () => {
-  const enc = (s: string) => new TextEncoder().encode(s);
-
-  it('10 writers racing to create the manifest itself all land (no 500 from create-only on Blob)', async () => {
-    const repo = new SyncRepository(new BlobStore(fakeBlobClient()));
-    const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => repo.put(`n${i}.md`, enc(`n${i}`), { ifNoneMatch: true })));
-    expect(results.filter((r) => r.status === 'rejected').map((r) => String((r as PromiseRejectedResult).reason))).toEqual([]);
-    expect((await repo.manifest()).entries).toHaveLength(10);
-  });
-
-  it('keeps working once the manifest is large enough that get() returns weak ETags', async () => {
-    const repo = new SyncRepository(new BlobStore(fakeBlobClient()));
-    for (let i = 0; i < 30; i++) await repo.put(`notes/document-${i}.md`, enc(`d${i}`), { ifNoneMatch: true });
-    const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => repo.put(`more-${i}.md`, enc(`m${i}`), { ifNoneMatch: true })));
-    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
-    const e = (await repo.manifest()).entries.find((x) => x.path === 'more-0.md')!;
-    const races = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => repo.put('more-0.md', enc(`v${i}`), { ifMatch: e.rev })));
-    expect(races.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
   });
 });

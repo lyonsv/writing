@@ -6,7 +6,7 @@
 
 **What to do**
 1. **Wait for one or two sync cycles** (or use Margin › Sync Now, ⌥⌘S). A momentary stale read clears itself, and the error goes away.
-2. If it persists, the server really went back in time. Find out why: a restored Blob store, someone pointing Margin at a different server or account, or a test deployment using the wrong store (ADR 0014 guards against that last one).
+2. If it persists, the server really went back in time. Find out why: a storage repo reset to an older commit (or a restored backup), someone pointing Margin at a different server or account, or a test deployment using the wrong store (ADR 0014 guards against that last one).
 3. Make sure your newest text is safe: it is in the documents folder on this Mac (Margin › Choose Documents Folder… shows which). Optionally copy the folder somewhere first.
 4. Use **Margin › Reset Sync State for This Folder…**. Margin forgets what this folder last agreed with the server and compares everything again:
    - **Nothing is deleted** on this Mac or on the server.
