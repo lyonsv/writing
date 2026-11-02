@@ -318,6 +318,37 @@ describe('native start confirmation page (CSRF-protected)', () => {
     expect(h.github.calls).toEqual([]);
   });
 
+  it('the confirmation can be used once: replaying the captured cookie and CSRF token fails', async () => {
+    const h = setup();
+    const page = await h.req(url());
+    const cookie = page.headers.getSetCookie().find((c) => c.startsWith('__Host-margin_confirm='))!.split(';')[0]!;
+    const csrf = /name="csrf" value="([^"]+)"/.exec(await page.text())![1]!;
+    const post = () =>
+      h.req('/api/auth/native/start', {
+        method: 'POST',
+        headers: { Cookie: cookie, Origin: 'https://margin.test', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf, decision: 'continue' }).toString(),
+      });
+    expect((await post()).status).toBe(302);
+    const replay = await post();
+    expect(replay.status).toBe(400);
+    expect(replay.headers.get('Location')).toBeNull();
+    // Concurrent replays: at most one proceeds.
+    const page2 = await h.req(url());
+    const cookie2 = page2.headers.getSetCookie().find((c) => c.startsWith('__Host-margin_confirm='))!.split(';')[0]!;
+    const csrf2 = /name="csrf" value="([^"]+)"/.exec(await page2.text())![1]!;
+    const many = await Promise.all(
+      [1, 2, 3].map(() =>
+        h.req('/api/auth/native/start', {
+          method: 'POST',
+          headers: { Cookie: cookie2, Origin: 'https://margin.test', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ csrf: csrf2, decision: 'continue' }).toString(),
+        }),
+      ),
+    );
+    expect(many.map((r) => r.status).sort()).toEqual([302, 400, 400]);
+  });
+
   it('Cancel sends access_denied back to the app', async () => {
     const h = setup();
     const res = await nativeStart(h, new Jar(), url(), 'cancel');

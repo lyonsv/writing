@@ -134,6 +134,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
   let devices!: DeviceRepository;
   let codes!: CodeRepository;
   let states!: NonceRepository;
+  let confirms!: NonceRepository;
   const getConfig = (): Config => {
     if (!config) {
       config = typeof deps.config === 'function' ? deps.config() : deps.config;
@@ -142,6 +143,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       devices = new DeviceRepository(deps.store, pepper, now);
       codes = new CodeRepository(deps.store, pepper, now);
       states = new NonceRepository(deps.store, 'auth/states/', pepper.hash, now);
+      confirms = new NonceRepository(deps.store, 'auth/confirms/', pepper.hash, now);
     }
     return config;
   };
@@ -252,7 +254,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
    * own page. The validated request waits in a sealed cookie; the form carries a
    * CSRF token that must match it, and the POST must come from our own origin.
    */
-  app.get('/api/auth/native/start', limited('start'), (c) => {
+  app.get('/api/auth/native/start', limited('start'), async (c) => {
     const q = c.req.query();
     const ru = q.redirect_uri ?? '';
     const cc = q.code_challenge ?? '';
@@ -263,6 +265,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
     }
     const dn = cleanDeviceName(q.device_name);
     const csrf = randomToken(24);
+    // Single-use on the server too, so a captured confirm cookie can't be replayed.
+    await confirms.issue(csrf, OAUTH_COOKIE_TTL_S * 1000);
     const sealed = sealer!.seal({ ru, cc, cs, dn, csrf, exp: now() + OAUTH_COOKIE_TTL_S * 1000 } satisfies PendingConfirm);
     setCookie(c, cookieNames().confirm, sealed, { ...cookieBase(), maxAge: OAUTH_COOKIE_TTL_S });
     c.header('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
@@ -299,7 +303,8 @@ export function createApp(deps: AppDeps): Hono<Env> {
       pending.exp <= now() ||
       c.req.header('Origin') !== cfg.publicUrl.origin ||
       !safeEqual(pending.csrf, csrf) ||
-      !isAllowedNativeRedirect(pending.ru)
+      !isAllowedNativeRedirect(pending.ru) ||
+      !(await confirms.burn(pending.csrf))
     ) {
       log('signin.bad_confirm');
       return page(c, 400, 'Sign-in expired', 'This sign-in page has expired or was already used. Start again from the app.');
@@ -310,6 +315,7 @@ export function createApp(deps: AppDeps): Hono<Env> {
       back.searchParams.set('state', pending.cs);
       return c.redirect(back.toString(), 302);
     }
+    await confirms.sweep().catch(() => undefined);
     return startGitHub(c, { flow: 'native', ru: pending.ru, cc: pending.cc, cs: pending.cs, dn: pending.dn });
   });
 
