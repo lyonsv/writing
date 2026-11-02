@@ -22,3 +22,15 @@ mac:
   identity: null
   hardenedRuntime: false
   darkModeSupport: true
+# Electron fuses (flipped in the binary at package time). Note: these disable
+# --inspect, so Playwright drives the unpacked build instead; see verify:packaged.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+  # Unsigned build: re-apply the ad-hoc signature so arm64 macOS will launch it.
+  resetAdHocDarwinSignature: true
