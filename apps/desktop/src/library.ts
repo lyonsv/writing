@@ -606,6 +606,19 @@ export class FileSystemLibrary implements DocumentStore {
   // documents: the watcher then reports the change like any external edit, so a
   // clean editor reloads and a dirty one saves to a conflict copy (ADR 0006).
 
+  /** Size, mtime, ctime and inode of a document (the sync hash cache key), or null. */
+  async statForSync(relative: string): Promise<{ size: number; mtimeMs: number; ctimeMs: number; ino: number } | null> {
+    const key = this.key(relative);
+    const file = await this.resolve(key);
+    try {
+      const st = await fs.stat(file);
+      return st.isFile() ? { size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, ino: st.ino } : null;
+    } catch (error) {
+      if (code(error) === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
   /** Current bytes and hash of a document, or null if it doesn't exist. */
   async readForSync(relative: string): Promise<{ bytes: Buffer; hash: string } | null> {
     const key = this.key(relative);

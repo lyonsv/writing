@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -226,6 +226,50 @@ describe('two desktop clients against the local server', () => {
     expect(snapshot(a)).toEqual(before);
     expect(a.trashed).toEqual([]);
     expect(a.sync.status()).toMatchObject({ state: 'error', message: expect.stringContaining('older') });
+  });
+
+  // Validator M5 MAJOR 2: the hash cache was keyed on size + mtime only.
+  // Whole-second mtimes, so "preserved" is exact (APFS keeps sub-ms precision that a
+  // Date round trip would lose, which would hide the bug).
+  const T = 1_700_000_000;
+  const writePinned = (d: Device, p: string, text: string) => {
+    write(d, p, text);
+    utimesSync(path.join(d.root, p), T, T);
+  };
+  const preserveMtimeEdit = (d: Device, p: string, text: string) => {
+    const file = path.join(d.root, p);
+    const before = statSync(file).mtimeMs;
+    writeFileSync(file, text); // same size
+    utimesSync(file, T, T); // like `cp -p` / `rsync -t`
+    expect(statSync(file).mtimeMs).toBe(before);
+  };
+
+  it('a same-size edit with the mtime preserved still uploads', async () => {
+    const a = await device('A');
+    const b = await device('B');
+    writePinned(a, 'p.md', 'aaaa');
+    await converge(a, b);
+    preserveMtimeEdit(a, 'p.md', 'bbbb');
+    await a.sync.syncNow();
+    await b.sync.syncNow();
+    expect(read(b, 'p.md')).toBe('bbbb');
+  });
+
+  it('a remote delete vs a same-size, mtime-preserved local edit: the edit wins, nothing is trashed, nothing sticks', async () => {
+    const a = await device('A');
+    const b = await device('B');
+    writePinned(a, 'q.md', 'aaaa');
+    await converge(a, b);
+    utimesSync(path.join(b.root, 'q.md'), T, T);
+    await b.sync.syncNow(); // B's cache now holds the pinned mtime
+    unlinkSync(path.join(a.root, 'q.md'));
+    await a.sync.syncNow();
+    preserveMtimeEdit(b, 'q.md', 'bbbb');
+    await b.sync.syncNow();
+    expect(b.trashed).toEqual([]);
+    expect(b.sync.status()).toMatchObject({ state: 'idle' });
+    expect(b.sync.status().message ?? '').not.toMatch(/case/);
+    expect(await converge(a, b)).toEqual({ 'q.md': 'bbbb' });
   });
 
   it('keeps going past documents the server refuses, and reports them', async () => {

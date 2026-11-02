@@ -52,8 +52,12 @@ interface StateFile {
   login: string;
   root: string;
   base: Record<string, BaseEntry>;
-  /** Hash cache: path → size/mtime/hash, so unchanged files aren't re-read every run. */
-  hashes: Record<string, { size: number; mtimeMs: number; hash: string }>;
+  /**
+   * Hash cache: path → (size, mtime, ctime, inode) → hash, so unchanged files
+   * aren't re-read every run. ctime and inode are in the key because mtime can be
+   * preserved on purpose (`cp -p`, `rsync -t`) while ctime can't be set by users.
+   */
+  hashes: Record<string, { size: number; mtimeMs: number; ctimeMs: number; ino: number; hash: string }>;
 }
 
 const sha256 = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
@@ -130,15 +134,19 @@ class LibraryLocal implements SyncLocal {
       if (e.kind !== 'document') continue;
       const nfc = e.path.normalize('NFC');
       if (!isSyncablePath(nfc) || this.disk.has(nfc)) continue;
-      const size = e.size ?? -1;
+      const st = await this.library.statForSync(e.path);
+      if (!st) continue;
       const cached = this.state.hashes[nfc];
-      let hash = cached && cached.size === size && cached.mtimeMs === e.modifiedAt ? cached.hash : undefined;
+      const fresh =
+        cached && cached.size === st.size && cached.mtimeMs === st.mtimeMs && cached.ctimeMs === st.ctimeMs && cached.ino === st.ino;
+      let hash = fresh ? cached.hash : undefined;
       if (!hash) {
         const read = await this.library.readForSync(e.path);
         if (!read) continue;
         hash = read.hash;
       }
-      hashes[nfc] = { size, mtimeMs: e.modifiedAt, hash };
+      hashes[nfc] = { ...st, hash };
+      const size = st.size;
       this.disk.set(nfc, e.path);
       out.push({ path: nfc, hash, size });
     }
@@ -146,29 +154,50 @@ class LibraryLocal implements SyncLocal {
     return out;
   }
 
+  /**
+   * Any refused or failed local action means our cached hash may be wrong:
+   * forget it so the next pass re-reads the file (otherwise a wrong cache entry
+   * could keep a change from ever uploading, or retry a refused action forever).
+   */
+  private async guarded(paths: string[], fn: () => Promise<boolean>): Promise<boolean> {
+    try {
+      const ok = await fn();
+      if (!ok) for (const p of paths) delete this.state.hashes[p];
+      return ok;
+    } catch (error) {
+      for (const p of paths) delete this.state.hashes[p];
+      throw error;
+    }
+  }
+
   async read(p: string) {
     const r = await this.library.readForSync(this.onDisk(p));
+    if (!r || this.state.hashes[p]?.hash !== r.hash) delete this.state.hashes[p];
     return r ? { bytes: new Uint8Array(r.bytes), hash: r.hash } : null;
   }
 
-  async write(p: string, bytes: Uint8Array, expect: string | null) {
-    const ok = await this.library.writeForSync(this.onDisk(p), bytes, expect);
-    // Refused: our cached hash may be stale (same size and mtime); re-read next time.
-    if (!ok) delete this.state.hashes[p];
-    return ok;
+  write(p: string, bytes: Uint8Array, expect: string | null) {
+    return this.guarded([p], () => this.library.writeForSync(this.onDisk(p), bytes, expect));
   }
 
-  async remove(p: string, expect: string) {
-    const abs = await this.library.resolve(this.onDisk(p));
-    return this.library.removeForSync(this.onDisk(p), expect, () => this.trash(abs));
+  remove(p: string, expect: string) {
+    return this.guarded([p], async () => {
+      const abs = await this.library.resolve(this.onDisk(p));
+      return this.library.removeForSync(this.onDisk(p), expect, () => this.trash(abs));
+    });
   }
 
   move(from: string, to: string, expect: string) {
-    return this.library.moveForSync(this.onDisk(from), to, expect);
+    return this.guarded([from, to], () => this.library.moveForSync(this.onDisk(from), to, expect));
   }
 
   async createConflictCopy(p: string, bytes: Uint8Array) {
-    return (await this.library.conflictCopyForSync(this.onDisk(p), bytes)).normalize('NFC');
+    try {
+      return (await this.library.conflictCopyForSync(this.onDisk(p), bytes)).normalize('NFC');
+    } catch (error) {
+      delete this.state.hashes[p];
+      throw error;
+    }
   }
 }
 
@@ -304,7 +333,7 @@ export class SyncService {
       const notes: string[] = [];
       if (report.rejected.length) notes.push(`${report.rejected.length} document(s) not synced (${report.rejected[0]!.reason})`);
       if (report.conflicts.length) notes.push(`${report.conflicts.length} conflict copy(s) created`);
-      if (!report.settled && report.deferred.length) notes.push(`${report.deferred.length} item(s) waiting (e.g. a name that differs only in case)`);
+      if (!report.settled && report.deferred.length) notes.push(`${report.deferred.length} item(s) couldn’t sync this time; will retry`);
       this.setStatus({ state: 'idle', lastSyncedAt: new Date().toISOString(), ...(notes.length ? { message: notes.join('; ') } : {}) });
     } catch (error) {
       await persist().catch(() => undefined);
