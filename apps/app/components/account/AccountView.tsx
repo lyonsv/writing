@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type { SidebarColors } from '../library/Sidebar';
+import { radius, space, type } from '../ui/tokens';
 
 export interface AccountViewProps {
   backend: AccountBackend;
@@ -164,12 +165,12 @@ const styles = StyleSheet.create({
   backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', paddingTop: '10%' },
   inline: { width: '100%' },
   inlinePanel: { width: '100%', paddingVertical: 8 },
-  panel: { width: 520, maxWidth: '90%', maxHeight: '70%', borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, padding: 16 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
-  title: { fontSize: 16, fontWeight: '600' },
-  line: { fontSize: 14 },
-  small: { fontSize: 12, marginTop: 2 },
-  section: { fontSize: 11, letterSpacing: 0.8, marginTop: 16, marginBottom: 4 },
+  panel: { width: 520, maxWidth: '90%', maxHeight: '70%', borderRadius: radius.m, borderWidth: StyleSheet.hairlineWidth, padding: space.l },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: space.s },
+  title: type.title,
+  line: type.body,
+  small: { ...type.small, marginTop: 2 },
+  section: { ...type.section, marginTop: space.l, marginBottom: space.xs },
   list: { flexGrow: 0 },
   device: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 12 },
   action: { marginTop: 14, alignSelf: 'flex-start' },

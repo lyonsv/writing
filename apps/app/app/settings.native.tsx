@@ -1,7 +1,8 @@
 import { DEV_SERVER_URL, PRODUCTION_SERVER_URL, type FocusScopeSetting } from '@margin/core';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useColorScheme } from 'react-native';
+import Constants from 'expo-constants';
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useColorScheme } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AccountView } from '../components/account/AccountView';
@@ -172,6 +173,19 @@ export default function SettingsScreen() {
             }
           />
         ) : null}
+
+        <Text style={[styles.section, muted]}>ABOUT</Text>
+        <Text style={[styles.body, text]}>Margin {Constants.expoConfig?.version ?? ''}</Text>
+        <Text style={[styles.small, muted]}>A quiet place to write markdown. © 2026 Vincent Lyons, MIT License.</Text>
+        <Text style={[styles.small, muted]}>Writing font: IBM Plex Mono, © IBM Corp., SIL Open Font License 1.1.</Text>
+        <View style={styles.buttons}>
+          <Button
+            label="Licences"
+            colors={colors}
+            onPress={() => void Linking.openURL('https://github.com/lyonsv/writing/blob/main/THIRD_PARTY_NOTICES.md')}
+          />
+          <Button label="Source code" colors={colors} onPress={() => void Linking.openURL('https://github.com/lyonsv/writing')} />
+        </View>
 
         <Text style={[styles.section, muted]}>DIAGNOSTICS</Text>
         {diag.length === 0 ? <Text style={[styles.small, muted]}>Open a document to check the editor font.</Text> : null}

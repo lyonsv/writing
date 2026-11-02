@@ -15,6 +15,24 @@ const appPath = ['mac-arm64', 'mac', 'mac-universal']
   .find((p) => existsSync(p));
 if (!appPath) throw new Error('No packaged Margin.app; run `pnpm build:desktop` first.');
 
+// The app icon (ADR 0018): Info.plist names it and Resources holds exactly the generated icns.
+{
+  const { execFileSync } = await import('node:child_process');
+  const { readFileSync } = await import('node:fs');
+  const plist = path.join(appPath, 'Contents', 'Info.plist');
+  const iconName = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIconFile', plist], { encoding: 'utf8' }).trim();
+  const iconFile = path.join(appPath, 'Contents', 'Resources', iconName.endsWith('.icns') ? iconName : `${iconName}.icns`);
+  if (!existsSync(iconFile)) throw new Error(`Info.plist CFBundleIconFile ${iconName} is missing from Resources`);
+  const built = readFileSync(iconFile);
+  const source = readFileSync(path.join(root, 'build', 'icon.icns'));
+  if (!built.equals(source) || built.subarray(0, 4).toString() !== 'icns') throw new Error('packaged icon differs from build/icon.icns');
+  console.log(`icon: CFBundleIconFile=${iconName}, ${built.length} bytes, matches build/icon.icns`);
+  for (const f of ['LICENSE.txt', 'THIRD_PARTY_NOTICES.md']) {
+    if (!existsSync(path.join(appPath, 'Contents', 'Resources', 'licenses', f))) throw new Error(`licenses/${f} missing from the app`);
+  }
+  console.log('licences: bundled');
+}
+
 const expected = {
   RunAsNode: false,
   EnableCookieEncryption: true,

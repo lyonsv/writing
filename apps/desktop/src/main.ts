@@ -566,7 +566,34 @@ function applySettings(s: Settings): void {
   }
 }
 
+const REPO_URL = 'https://github.com/lyonsv/writing';
+
+/** Margin's MIT licence and the third-party notices (IBM Plex Mono OFL etc.), bundled in Resources/licenses. */
+function licencesDir(): string {
+  return app.isPackaged ? path.join(process.resourcesPath, 'licenses') : path.resolve(__dirname, '../../..');
+}
+
+async function openLicences(): Promise<void> {
+  const file = path.join(licencesDir(), 'THIRD_PARTY_NOTICES.md');
+  const error = await shell.openPath(file);
+  if (error) void shell.openExternal(`${REPO_URL}/blob/main/THIRD_PARTY_NOTICES.md`);
+}
+
+/** Margin › About Margin: version, licence and font credit. */
+function setAboutPanel(): void {
+  app.setAboutPanelOptions({
+    applicationName: 'Margin',
+    applicationVersion: app.getVersion(),
+    version: `Electron ${process.versions.electron}`,
+    copyright: 'Copyright © 2026 Vincent Lyons. MIT License.',
+    credits:
+      'A quiet place to write markdown.\n\nWriting font: IBM Plex Mono, © IBM Corp., SIL Open Font License 1.1.\nOpen-source licences: Help › Licences.',
+    website: REPO_URL,
+  });
+}
+
 function buildMenu(): void {
+  setAboutPanel();
   const template: MenuItemConstructorOptions[] = [
     {
       role: 'appMenu',
@@ -673,6 +700,13 @@ function buildMenu(): void {
       ],
     },
     { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        { id: 'licences', label: 'Licences', click: () => void openLicences() },
+        { label: 'Margin on GitHub', click: () => void shell.openExternal(REPO_URL) },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   updateAccountMenu();

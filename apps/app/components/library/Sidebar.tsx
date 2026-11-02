@@ -271,6 +271,14 @@ export function Sidebar(props: SidebarProps) {
             props.onRefresh ? <RefreshControl refreshing={props.refreshing ?? false} onRefresh={props.onRefresh} tintColor={colors.muted} /> : undefined
           }
         >
+          {rows.length === 0 ? (
+            <View testID="library-empty" style={[styles.empty, touch && styles.emptyTouch]}>
+              <Text style={[styles.emptyTitle, touch && styles.emptyTitleTouch, { color: colors.text }]}>No documents yet</Text>
+              <Text style={[styles.emptyBody, touch && styles.emptyBodyTouch, { color: colors.muted }]}>
+                {touch ? 'Tap New to start writing. Pull down to sync.' : 'New (⌘N) starts a document; Folder (⇧⌘N) organises them.'}
+              </Text>
+            </View>
+          ) : null}
           {rows.map(({ node, depth, expanded: isOpen }) => {
             const active = node.kind === 'document' && node.path === activePath;
             const editing = renaming?.path === node.path;
@@ -393,6 +401,12 @@ export function Sidebar(props: SidebarProps) {
 
 const styles = StyleSheet.create({
   root: { width: 260, height: '100%' },
+  empty: { paddingHorizontal: 18, paddingVertical: 16, gap: 4 },
+  emptyTouch: { paddingHorizontal: 24, paddingVertical: 40, alignItems: 'center' },
+  emptyTitle: { fontSize: 13, fontWeight: '600' },
+  emptyTitleTouch: { fontSize: 18 },
+  emptyBody: { fontSize: 12, lineHeight: 17 },
+  emptyBodyTouch: { fontSize: 15, lineHeight: 21, textAlign: 'center' },
   rootTouch: { width: '100%', flex: 1 },
   rowTouch: { paddingVertical: 11, marginHorizontal: 8, borderRadius: 8 },
   labelTouch: { fontSize: 17 },

@@ -2,6 +2,7 @@ import { quickOpen, type DocumentNode } from '@margin/core';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { radius, space, type } from '../ui/tokens';
 import type { SidebarColors } from './Sidebar';
 
 export interface QuickOpenProps {
@@ -64,10 +65,10 @@ export function QuickOpen({ documents, colors, onOpen, onClose }: QuickOpenProps
                 onPress={() => choose(i)}
                 style={[styles.result, i === selected && { backgroundColor: colors.active }]}
               >
-                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14 }}>
+                <Text numberOfLines={1} style={[type.body, { color: colors.text }]}>
                   {r.title}
                 </Text>
-                <Text numberOfLines={1} style={{ color: colors.muted, fontSize: 11 }}>
+                <Text numberOfLines={1} style={[type.small, { color: colors.muted }]}>
                   {r.path}
                 </Text>
               </Pressable>
@@ -81,9 +82,9 @@ export function QuickOpen({ documents, colors, onOpen, onClose }: QuickOpenProps
 
 const styles = StyleSheet.create({
   backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', paddingTop: '12%' },
-  panel: { width: 520, maxWidth: '90%', maxHeight: '60%', borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
-  input: { fontSize: 16, paddingHorizontal: 16, paddingVertical: 12 },
+  panel: { width: 520, maxWidth: '90%', maxHeight: '60%', borderRadius: radius.m, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
+  input: { fontSize: 16, paddingHorizontal: space.l, paddingVertical: space.m },
   list: { flexGrow: 0 },
-  result: { paddingHorizontal: 16, paddingVertical: 6 },
-  empty: { paddingHorizontal: 16, paddingVertical: 10, fontSize: 13 },
+  result: { paddingHorizontal: space.l, paddingVertical: 6 },
+  empty: { paddingHorizontal: space.l, paddingVertical: space.m, ...type.small },
 });
