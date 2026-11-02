@@ -71,9 +71,17 @@ Goal: Margin on the owner's Mac (packaged app) and iPhone (**installable web app
 - [x] Security: `margin://auth/callback` removed from the production allowlist (dev-only flag; ADR 0017 amendments)
 - [x] Tests: Playwright WebKit + iPhone profile against a local server: sign-in (mock GitHub), offline edit → reconnect → sync, convergence with desktop, storage semantics, service worker never caches API responses or stale HTML after sign-out; `docs/ios-testing.md` → "Install on iPhone" guide
 - [ ] macOS: packaged `.app` in `/Applications`, releases on GitHub Releases (unsigned; manual updates, no `electron-updater` without signing)
-- [ ] Confirm on first deploy: GitHub accepts PKCE for the OAuth App; Blob conditional writes behave as ADRs 0012/0013 assume (manifest CAS)
+- [x] Confirm on first deploy: GitHub accepts PKCE for the OAuth App (owner signed in, 2026-11-02). Blob superseded by the GitHub-repo store (ADR 0021); its conditional writes verified with `verify:github`
 - [ ] Sync maintenance: garbage-collect unreferenced `sync/objects/*` (ADR 0013); backup = export manifest paths → objects
-- [ ] Deploy the web app (orchestrator) and confirm the first-deploy items in ADRs 0014/0020
-- [ ] Owner: install on iPhone per `docs/ios-testing.md` and verify end-to-end: write on Mac → appears on iPhone and vice versa; revoked device loses access
-- [ ] Backups: periodic export of the Blob store (e.g. scheduled GitHub Action or Vercel cron to a private archive)
+- [x] Deploy the web app (orchestrator) and confirm the first-deploy items in ADRs 0014/0020. The first deploy found that `public/` isn't served (fixed in a2c4294) and that `Referrer-Policy: no-referrer` broke the sign-in confirm form (fixed in fed9749). `pnpm --filter @margin/server smoke <url>` is now required after every deploy
+- [x] Owner: installed on iPhone and verified Mac ↔ iPhone sync end-to-end (2026-11-02)
+- [ ] Owner: verify that a revoked device loses access (Account and Devices → revoke the iPhone, then reopen)
+- [x] Backups: every write is a commit in the private `lyonsv/margin-library` repo, so the full history is versioned (ADR 0021). Optional: a readable export of manifest paths → objects
 - Not planned: EAS Build / TestFlight / App Store and signed or notarised macOS builds (ADR 0019). The M6 native app remains a development target (Expo Go).
+
+## Backlog
+- [ ] Phone: in focus mode with the keyboard hidden, the editor toolbar is hidden with no visible way back; tap the screen edge to reveal it for a few seconds
+- [ ] Ops: `GITHUB_STORE_TOKEN` (fine-grained PAT, `margin-sync storage`) expires **2027-11-01**. Rotate it before then (docs/server-setup.md); sync stops when it expires
+- [ ] Ops: delete the suspended, unused Vercel Blob stores `margin-store` and `margin-store-preview` and their env vars (`BLOB_READ_WRITE_TOKEN`, `PRODUCTION_BLOB_STORE_ID`). This needs the owner's OK, because deleting is irreversible
+- [ ] macOS release pipeline: GitHub Releases for the unsigned `.app` (see M8)
+
