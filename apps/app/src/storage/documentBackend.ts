@@ -2,6 +2,7 @@ import type {
   DesktopBridge,
   DocumentStore,
   ExternalChange,
+  FlushResult,
   OpenedDocument,
   SaveResult,
 } from '@margin/core';
@@ -15,7 +16,7 @@ export interface DocumentBackend {
   save(path: string, content: string): Promise<SaveResult>;
   acknowledgeExternal?(path: string, token: string): Promise<boolean>;
   onExternalChange?(listener: (change: ExternalChange) => void): () => void;
-  onFlushRequest?(handler: () => Promise<void>): () => void;
+  onFlushRequest?(handler: () => Promise<FlushResult>): () => void;
 }
 
 /** Electron: the main process owns files, the write queue and conflict detection. */

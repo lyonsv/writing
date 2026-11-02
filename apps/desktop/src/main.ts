@@ -1,10 +1,21 @@
 import path from 'node:path';
 
-import { IPC_CHANNELS, type ExternalChange, type FocusScopeSetting, type Settings } from '@margin/core';
+import { promises as fs } from 'node:fs';
+
+import {
+  IPC_CHANNELS,
+  basename,
+  displayName,
+  type ExternalChange,
+  type FlushResult,
+  type FocusScopeSetting,
+  type Settings,
+} from '@margin/core';
 import {
   BrowserWindow,
   Menu,
   app,
+  dialog,
   ipcMain,
   nativeTheme,
   session,
@@ -102,7 +113,20 @@ function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => Pro
 // ------------------------------------------------------------------ flush handshake
 
 let flushSeq = 0;
-const flushWaiters = new Map<number, () => void>();
+const flushWaiters = new Map<number, (result: FlushResult) => void>();
+
+/** Outcome of flushing one window: what the renderer reported, or that it was unresponsive. */
+type FlushOutcome = FlushResult | { clean: true; unresponsive: true };
+
+function parseFlushResult(raw: unknown): FlushResult {
+  if (typeof raw !== 'object' || raw === null) return { clean: false };
+  const r = raw as Record<string, unknown>;
+  return {
+    clean: r.clean === true,
+    path: typeof r.path === 'string' ? r.path : undefined,
+    unsavedText: typeof r.unsavedText === 'string' ? r.unsavedText : undefined,
+  };
+}
 
 /**
  * Asks the window's renderer to push any unsaved editor text through `save`
@@ -110,23 +134,70 @@ const flushWaiters = new Map<number, () => void>();
  * A renderer that doesn't answer in time is destroyed (not closed: closing
  * waits for its unload handlers, which a hung page never runs).
  */
-function flushWindow(win: BrowserWindow): Promise<void> {
-  if (win.isDestroyed() || win.webContents.isCrashed()) return library.idle();
+function flushWindow(win: BrowserWindow): Promise<FlushOutcome> {
+  if (win.isDestroyed() || win.webContents.isCrashed()) {
+    return library.idle().then(() => ({ clean: true, unresponsive: true }) as const);
+  }
   const id = ++flushSeq;
-  return new Promise<void>((resolve) => {
+  return new Promise<FlushOutcome>((resolve) => {
     const timer = setTimeout(() => {
       flushWaiters.delete(id);
       console.warn(`Margin: renderer did not confirm flush within ${FLUSH_TIMEOUT_MS}ms; destroying its window`);
       if (!win.isDestroyed()) win.destroy();
-      resolve();
+      resolve({ clean: true, unresponsive: true });
     }, FLUSH_TIMEOUT_MS);
-    flushWaiters.set(id, () => {
+    flushWaiters.set(id, (result) => {
       clearTimeout(timer);
       flushWaiters.delete(id);
-      resolve();
+      resolve(result);
     });
     win.webContents.send(IPC_CHANNELS.flushRequest, id);
-  }).then(() => library.idle());
+  }).then(async (outcome) => {
+    await library.idle();
+    return outcome;
+  });
+}
+
+/**
+ * Some text couldn't be saved. Ask before discarding it; Cancel is the default.
+ * Returns true if it's OK to proceed with closing/quitting.
+ */
+async function confirmDiscard(unsaved: FlushResult[], action: 'Quit' | 'Close', parent?: BrowserWindow): Promise<boolean> {
+  const first = unsaved[0]!;
+  const name = first.path ? basename(first.path) : 'your document';
+  const options = {
+    type: 'warning' as const,
+    message: "Margin couldn't save your changes.",
+    detail:
+      `Your latest changes to “${name}” could not be written to disk (the folder may be read-only, ` +
+      `offline or full). If you ${action.toLowerCase()} now, those changes will be lost.`,
+    buttons: ['Cancel', ...(first.unsavedText !== undefined ? ['Save a Copy…'] : []), `${action} Anyway`],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  };
+  const { response } = parent && !parent.isDestroyed()
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options);
+  const label = options.buttons[response];
+  if (label === `${action} Anyway`) return true;
+  if (label !== 'Save a Copy…') return false;
+
+  const stem = first.path ? displayName(first.path) : 'Untitled';
+  const save = await dialog.showSaveDialog({
+    title: 'Save a Copy',
+    defaultPath: path.join(app.getPath('documents'), `${stem} (unsaved copy).md`),
+    filters: [{ name: 'Markdown', extensions: ['md'] }],
+  });
+  if (save.canceled || !save.filePath) return false;
+  try {
+    // A location the user picked explicitly; exclusive create so we never clobber.
+    await fs.writeFile(save.filePath, first.unsavedText ?? '', { encoding: 'utf8', flag: 'wx' });
+    return true;
+  } catch (error) {
+    dialog.showErrorBox("Couldn't save the copy", `${save.filePath}: ${(error as Error).message}`);
+    return false;
+  }
 }
 
 let quitReady = false;
@@ -137,14 +208,24 @@ app.on('before-quit', (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  void Promise.all(BrowserWindow.getAllWindows().map(flushWindow))
-    .then(() => Promise.all([library.idle(), settings?.idle()]))
-    .catch((error: unknown) => console.error('Margin: flush before quit failed', error))
-    .finally(() => {
-      quitReady = true;
-      library.dispose();
-      app.quit();
-    });
+  void (async () => {
+    let proceed = true;
+    try {
+      const outcomes = await Promise.all(BrowserWindow.getAllWindows().map(flushWindow));
+      await Promise.all([library.idle(), settings?.idle()]);
+      const unsaved = outcomes.filter((o) => !o.clean);
+      if (unsaved.length > 0) proceed = await confirmDiscard(unsaved, 'Quit');
+    } catch (error) {
+      console.error('Margin: flush before quit failed', error);
+    }
+    if (!proceed) {
+      quitting = false; // user cancelled; keep running
+      return;
+    }
+    quitReady = true;
+    library.dispose();
+    app.quit();
+  })();
 });
 
 for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
@@ -174,13 +255,13 @@ function registerIpc(): void {
   });
   handle(IPC_CHANNELS.toggleFullScreen, async () => toggleFullScreen());
 
-  ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown) => {
+  ipcMain.on(IPC_CHANNELS.flushDone, (event, id: unknown, result: unknown) => {
     try {
       assertTrustedSender(event);
     } catch {
       return;
     }
-    if (typeof id === 'number') flushWaiters.get(id)?.();
+    if (typeof id === 'number') flushWaiters.get(id)?.(parseFlushResult(result));
   });
 }
 
@@ -321,10 +402,15 @@ function createWindow(): BrowserWindow {
     event.preventDefault();
     if (closing || quitting) return;
     closing = true;
-    void flushWindow(win).finally(() => {
+    void (async () => {
+      const outcome = await flushWindow(win).catch(() => ({ clean: false }) as FlushResult);
+      if (!outcome.clean && !(await confirmDiscard([outcome], 'Close', win))) {
+        closing = false;
+        return;
+      }
       closeReady = true;
       if (!win.isDestroyed()) win.close();
-    });
+    })();
   });
 
   // No new windows; http(s) links open in the default browser.

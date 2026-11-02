@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
-import { launch, newLibrary, quitAndWait } from './launch';
+import { dialogCalls, launch, newLibrary, quitAndWait, stubDialogs } from './launch';
 
 const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : null);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -249,5 +249,83 @@ test('closing a window whose renderer is hung destroys it after the timeout', as
     .poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), { timeout: 12_000 })
     .toBe(0);
   expect(Date.now() - started).toBeLessThan(12_000);
+  await quitAndWait(app);
+});
+
+/** Opens a fresh library, makes it read-only and types, so the save keeps failing. */
+async function failingSave(text: string) {
+  const lib = newLibrary();
+  const file = path.join(lib, 'Untitled.md');
+  const app = await launch(lib);
+  const page = await app.firstWindow();
+  await expect(page.locator('.cm-content')).toBeVisible();
+  await expect.poll(() => read(file)).toBe('');
+  chmodSync(lib, 0o555);
+  await page.locator('.cm-content').click();
+  await page.keyboard.type(text);
+  await expect(page.getByTestId('save-status')).toHaveText(/Not saved/, { timeout: 10_000 });
+  return { lib, file, app, page, restore: () => chmodSync(lib, 0o755) };
+}
+
+test('quitting while a save is failing asks first; Cancel (the default) keeps the app and the text', async () => {
+  const { file, app, page, restore } = await failingSave('precious words');
+  try {
+    await stubDialogs(app, { choose: 'Cancel' });
+    await app.evaluate(({ app: a }) => a.quit());
+    await expect.poll(() => dialogCalls(app).then((c) => c.length), { timeout: 10_000 }).toBe(1);
+    const [call] = await dialogCalls(app);
+    expect(call).toEqual({
+      message: "Margin couldn't save your changes.",
+      buttons: ['Cancel', 'Save a Copy…', 'Quit Anyway'],
+      defaultId: 0,
+    });
+    await sleep(500);
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+    await expect(page.locator('.cm-content')).toContainText('precious words');
+  } finally {
+    restore();
+  }
+  // Once the folder is writable again the retry lands, and quit no longer asks.
+  await expect.poll(() => read(file), { timeout: 20_000 }).toBe('precious words');
+  await quitAndWait(app);
+  expect(read(file)).toBe('precious words');
+});
+
+test('quitting while a save is failing: "Save a Copy…" writes the text elsewhere, then quits', async () => {
+  const { app, lib, restore } = await failingSave('rescue me');
+  const copy = path.join(newLibrary(), 'rescued.md');
+  try {
+    await stubDialogs(app, { choose: 'Save a Copy…', savePath: copy });
+    await quitAndWait(app);
+    expect(read(copy)).toBe('rescue me');
+    expect(read(path.join(lib, 'Untitled.md'))).toBe('');
+  } finally {
+    restore();
+  }
+});
+
+test('quitting while a save is failing: "Quit Anyway" quits', async () => {
+  const { app, restore } = await failingSave('let it go');
+  try {
+    await stubDialogs(app, { choose: 'Quit Anyway' });
+    await quitAndWait(app);
+  } finally {
+    restore();
+  }
+});
+
+test('closing the window while a save is failing asks too; Cancel keeps the window', async () => {
+  const { app, restore } = await failingSave('keep the window');
+  try {
+    await stubDialogs(app, { choose: 'Cancel' });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+    await expect.poll(() => dialogCalls(app).then((c) => c.map((x) => x.buttons.at(-1))), { timeout: 10_000 }).toEqual([
+      'Close Anyway',
+    ]);
+    await sleep(500);
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  } finally {
+    restore();
+  }
   await quitAndWait(app);
 });

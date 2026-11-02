@@ -59,3 +59,25 @@ export async function clickMenu(app: ElectronApplication, id: string): Promise<v
     item.click(undefined, BrowserWindow.getAllWindows()[0]);
   }, id);
 }
+
+/**
+ * Replaces the native dialogs in the main process (Playwright can't click them).
+ * `choose` is the message-box button label to press; `savePath` answers the save dialog.
+ */
+export async function stubDialogs(app: ElectronApplication, cfg: { choose: string; savePath?: string }): Promise<void> {
+  await app.evaluate(({ dialog }, c) => {
+    const g = globalThis as unknown as { __dialogCalls: unknown[] };
+    g.__dialogCalls = [];
+    const d = dialog as unknown as Record<string, unknown>;
+    d.showMessageBox = async (...args: unknown[]) => {
+      const opts = (args.length > 1 ? args[1] : args[0]) as { buttons: string[]; message: string; defaultId: number };
+      g.__dialogCalls.push({ message: opts.message, buttons: opts.buttons, defaultId: opts.defaultId });
+      return { response: opts.buttons.indexOf(c.choose), checkboxChecked: false };
+    };
+    d.showSaveDialog = async () => ({ canceled: !c.savePath, filePath: c.savePath });
+  }, cfg);
+}
+
+export function dialogCalls(app: ElectronApplication): Promise<Array<{ message: string; buttons: string[]; defaultId: number }>> {
+  return app.evaluate(() => (globalThis as unknown as { __dialogCalls: never[] }).__dialogCalls ?? []);
+}

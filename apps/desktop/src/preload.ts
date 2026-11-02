@@ -1,4 +1,11 @@
-import { DESKTOP_BRIDGE_KEY, IPC_CHANNELS, type DesktopBridge, type ExternalChange, type Settings } from '@margin/core';
+import {
+  DESKTOP_BRIDGE_KEY,
+  IPC_CHANNELS,
+  type DesktopBridge,
+  type ExternalChange,
+  type FlushResult,
+  type Settings,
+} from '@margin/core';
 import { contextBridge, ipcRenderer } from 'electron';
 
 // Sandboxed preload: only `electron` may be required at runtime; @margin/core is
@@ -6,11 +13,18 @@ import { contextBridge, ipcRenderer } from 'electron';
 const invoke = <T>(channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 // Flush handshake: main asks before closing/quitting; we run every registered
-// handler (the app pushes unsaved text and awaits the save), then confirm.
-const flushHandlers = new Set<() => Promise<void>>();
+// handler (the app pushes unsaved text and awaits the save), then report
+// whether everything reached disk.
+const flushHandlers = new Set<() => Promise<FlushResult>>();
 ipcRenderer.on(IPC_CHANNELS.flushRequest, (_event, id: number) => {
-  void Promise.allSettled([...flushHandlers].map((h) => h())).then(() => {
-    ipcRenderer.send(IPC_CHANNELS.flushDone, id);
+  void Promise.allSettled([...flushHandlers].map((h) => h())).then((settled) => {
+    let result: FlushResult = { clean: true };
+    for (const r of settled) {
+      if (r.status === 'rejected') result = { clean: false };
+      else if (!r.value.clean) result = r.value;
+      if (!result.clean) break;
+    }
+    ipcRenderer.send(IPC_CHANNELS.flushDone, id, result);
   });
 });
 

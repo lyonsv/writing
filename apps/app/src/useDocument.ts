@@ -85,6 +85,8 @@ export function useDocument(initialPath: string): DocumentSession {
       // The editor reacts synchronously by calling onChange with any pending text.
       if (typeof window !== 'undefined') window.dispatchEvent(new Event(FLUSH_EVENT));
       await scheduler.flush();
+      if (!scheduler.dirty) return { clean: true };
+      return { clean: false, path: pathRef.current, unsavedText: scheduler.latestText ?? undefined };
     });
 
     return () => {

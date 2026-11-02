@@ -25,6 +25,7 @@ export interface SaveSchedulerOptions {
  */
 export class SaveScheduler {
   private pending: string | null = null;
+  private latest: string | null = null;
   private running: Promise<void> | null = null;
   private retryTimer: unknown = undefined;
   private attempt = 0;
@@ -47,7 +48,13 @@ export class SaveScheduler {
     return this.pending !== null || this.running !== null || this.status === 'error';
   }
 
+  /** The most recently submitted text (what should be on disk), or null if none yet. */
+  get latestText(): string | null {
+    return this.latest;
+  }
+
   submit(text: string): void {
+    this.latest = text;
     this.pending = text;
     if (this.retryTimer === undefined) this.kick();
   }

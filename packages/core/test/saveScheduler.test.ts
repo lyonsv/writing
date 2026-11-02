@@ -51,6 +51,7 @@ describe('SaveScheduler', () => {
     await s.flush();
     expect(s.currentStatus).toBe('error');
     expect(s.dirty).toBe(true);
+    expect(s.latestText).toBe('one');
     s.submit('two'); // waits for the backoff timer rather than hammering
     await vi.advanceTimersByTimeAsync(100);
     expect(s.currentStatus).toBe('error');

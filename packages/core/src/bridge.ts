@@ -73,6 +73,15 @@ export interface DesktopDocumentsBridge {
   onExternalChange(listener: (change: ExternalChange) => void): () => void;
 }
 
+/** What a renderer reports after a flush request. */
+export interface FlushResult {
+  /** True if everything the user typed is on disk. */
+  clean: boolean;
+  /** When not clean: the document path and the text that couldn't be saved. */
+  path?: string;
+  unsavedText?: string;
+}
+
 export interface DesktopSettingsBridge {
   load(): Promise<Settings>;
   /** Unknown keys / invalid values are ignored by the main process. */
@@ -90,7 +99,7 @@ export interface DesktopBridge {
    * Registers a handler the main process runs before a window closes or the app
    * quits; the close/quit waits for every handler's promise.
    */
-  onFlushRequest(handler: () => Promise<void>): () => void;
+  onFlushRequest(handler: () => Promise<FlushResult>): () => void;
   /** Absolute path of the library folder on disk (display only). */
   libraryRoot(): Promise<string>;
   toggleFullScreen(): Promise<void>;
