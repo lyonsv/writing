@@ -46,7 +46,7 @@ Run everything from the repo root (Node >= 22, pnpm 10).
 | `pnpm --filter @margin/desktop package` | Full dmg + zip (unsigned; signing is not planned, ADR 0019). |
 | `pnpm brand:build` / `pnpm brand:check` | Regenerate / verify every logo, icon (icns, iOS, splash, favicon) from `scripts/brand/build.mjs` (ADR 0018). Never hand-edit the outputs. |
 | `pnpm notices` / `pnpm notices:check` | Regenerate / verify `THIRD_PARTY_NOTICES.md` from production dependencies. Run after adding or upgrading a dependency. |
-| `pnpm docs:screenshots` | README screenshots in `docs/images/` from the built desktop app (temp library). |
+| `pnpm docs:screenshots` | Every README image in `docs/images/` (`--only=desktop,phone,hero,gif`): desktop shots from the built Electron app, iPhone shots of the web export in WebKit (390×844 @3x), the composed hero (light/dark WebP) and the focus-mode GIF (ffmpeg). Temp folders and fresh browser storage only; needs `pnpm build:desktop` first. |
 
 Keyboard shortcuts (desktop menus; bound in the editor itself elsewhere): New Document ⌘N · New Folder ⇧⌘N · Quick Open ⌘P · Show Library ⌘\ · Focus Mode ⇧⌘F · Focus on Sentence ⌥⌘1 / Paragraph ⌥⌘2 / Nothing ⌥⌘0 · Typewriter Scrolling ⌥⌘T · Full Screen ⌃⌘F. See ADRs 0007 and 0009.
 
